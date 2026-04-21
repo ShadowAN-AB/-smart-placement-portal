@@ -6,6 +6,8 @@ import StudentDashboard from './pages/StudentDashboard';
 import RecruiterDashboard from './pages/RecruiterDashboard';
 import JobDetailPage from './pages/JobDetailPage';
 import AdminDashboard from './pages/AdminDashboard';
+import ResumeIntelligence from './pages/ResumeIntelligence';
+import InterviewsPage from './pages/InterviewsPage';
 
 function App() {
   const { isAuthenticated, user } = useAuth();
@@ -61,6 +63,22 @@ function App() {
         element={
           <ProtectedRoute role="admin">
             <AdminDashboard />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/resume-intelligence"
+        element={
+          <ProtectedRoute role="student">
+            <ResumeIntelligence />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/interviews"
+        element={
+          <ProtectedRoute>
+            <InterviewsPage />
           </ProtectedRoute>
         }
       />

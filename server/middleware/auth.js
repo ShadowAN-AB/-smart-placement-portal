@@ -6,11 +6,17 @@ const authMiddleware = async (req, res, next) => {
   try {
     const authHeader = req.headers.authorization;
 
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
-      return res.status(401).json({ message: 'Unauthorized: token missing' });
+    // Support token as query param for browser-initiated downloads (.ics files)
+    let token;
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      token = authHeader.split(' ')[1];
+    } else if (req.query.token) {
+      token = req.query.token;
     }
 
-    const token = authHeader.split(' ')[1];
+    if (!token) {
+      return res.status(401).json({ message: 'Unauthorized: token missing' });
+    }
     const payload = jwt.verify(token, jwtSecret);
 
     const user = await User.findById(payload.userId).select('-passwordHash');

@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import ApplicationStatusBadge from '../components/ApplicationStatusBadge';
+import InterviewScheduleModal from '../components/InterviewScheduleModal';
 import JobCard from '../components/JobCard';
 import JobForm from '../components/JobForm';
 import Button from '../components/common/Button';
@@ -8,6 +9,7 @@ import Card from '../components/common/Card';
 import LoadingSpinner from '../components/common/LoadingSpinner';
 import Modal from '../components/common/Modal';
 import { useAuth } from '../context/AuthContext';
+import { useInterviews } from '../hooks/useInterviews';
 import { useJobs } from '../hooks/useJobs';
 import { apiRequest } from '../utils/api';
 import { formatDateShort } from '../utils/formatters';
@@ -16,6 +18,8 @@ const RecruiterDashboard = () => {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
   const { jobs, loading, error, refetchJobs } = useJobs();
+  const { interviews, scheduleInterview, refetchInterviews } = useInterviews();
+  const [scheduleModal, setScheduleModal] = useState({ open: false, application: null });
   const [applicantsState, setApplicantsState] = useState({
     open: false,
     jobTitle: '',
@@ -177,6 +181,27 @@ const RecruiterDashboard = () => {
     }));
   };
 
+  const openScheduleModal = (application) => {
+    setScheduleModal({ open: true, application });
+  };
+
+  const closeScheduleModal = () => {
+    setScheduleModal({ open: false, application: null });
+  };
+
+  const handleScheduleInterview = async (payload) => {
+    await scheduleInterview(payload);
+    // Refresh applicants list to show updated status
+    if (applicantsState.jobId) {
+      await loadApplicants({
+        jobId: applicantsState.jobId,
+        page: applicantsState.page,
+        filters: applicantsState.filters,
+        jobTitle: applicantsState.jobTitle,
+      });
+    }
+  };
+
   const totalApplicants = ownJobs.reduce((total, job) => total + Number(job.totalApplicants || 0), 0);
 
   return (
@@ -188,7 +213,10 @@ const RecruiterDashboard = () => {
             <h1 className="text-3xl font-heading font-bold">Welcome, {user?.name}</h1>
             <p className="text-slate-400">Role: {user?.role}</p>
           </div>
-          <Button variant="secondary" onClick={logout}>Logout</Button>
+          <div className="flex gap-3">
+            <Button variant="ghost" onClick={() => navigate('/interviews')}>📅 Interviews</Button>
+            <Button variant="secondary" onClick={logout}>Logout</Button>
+          </div>
         </header>
 
         <section className="grid md:grid-cols-3 gap-4">
@@ -317,7 +345,7 @@ const RecruiterDashboard = () => {
                         <td className="py-3">
                           <div className="flex gap-2">
                             <Button className="text-xs px-2 py-1" onClick={() => updateApplicationStatus(row._id, 'shortlisted')}>Shortlist</Button>
-                            <Button variant="ghost" className="text-xs px-2 py-1" onClick={() => updateApplicationStatus(row._id, 'interview')}>Interview</Button>
+                            <Button variant="ghost" className="text-xs px-2 py-1" onClick={() => openScheduleModal(row)}>📅 Schedule</Button>
                             <Button variant="danger" className="text-xs px-2 py-1" onClick={() => updateApplicationStatus(row._id, 'rejected')}>Reject</Button>
                           </div>
                         </td>
@@ -354,6 +382,13 @@ const RecruiterDashboard = () => {
             </>
           ) : null}
         </Modal>
+
+        <InterviewScheduleModal
+          open={scheduleModal.open}
+          onClose={closeScheduleModal}
+          application={scheduleModal.application}
+          onSchedule={handleScheduleInterview}
+        />
       </div>
     </main>
   );

@@ -28,3 +28,34 @@ export const getMatchLabel = (score) => {
   if (value < 70) return 'Good';
   return 'Excellent';
 };
+
+export const formatInterviewDate = (dateStr) => {
+  if (!dateStr) return '-';
+  return new Date(dateStr).toLocaleDateString('en-IN', {
+    weekday: 'short',
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+  });
+};
+
+export const formatInterviewTime = (dateStr) => {
+  if (!dateStr) return '-';
+  return new Date(dateStr).toLocaleTimeString('en-IN', {
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: true,
+  });
+};
+
+export const getCountdown = (dateStr) => {
+  if (!dateStr) return '';
+  const diff = new Date(dateStr) - new Date();
+  if (diff <= 0) return 'Now';
+  const days = Math.floor(diff / (1000 * 60 * 60 * 24));
+  const hours = Math.floor((diff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+  const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
+  if (days > 0) return `in ${days}d ${hours}h`;
+  if (hours > 0) return `in ${hours}h ${minutes}m`;
+  return `in ${minutes}m`;
+};

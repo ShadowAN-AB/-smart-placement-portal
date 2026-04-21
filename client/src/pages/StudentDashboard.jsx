@@ -9,6 +9,7 @@ import { useAuth } from '../context/AuthContext';
 import { useApplications } from '../hooks/useApplications';
 import { useJobs } from '../hooks/useJobs';
 import { useProfile } from '../hooks/useProfile';
+import UpcomingInterviews from '../components/UpcomingInterviews';
 import { apiRequest } from '../utils/api';
 import { formatDateShort } from '../utils/formatters';
 
@@ -90,6 +91,9 @@ const StudentDashboard = () => {
           <div className="flex gap-3">
             <Button variant="ghost" onClick={seedProfile}>
               Auto Fill Profile
+            </Button>
+            <Button variant="ghost" onClick={() => navigate('/interviews')}>
+              📅 My Interviews
             </Button>
             <Button variant="secondary" onClick={logout}>
               Logout
@@ -220,6 +224,8 @@ const StudentDashboard = () => {
               </div>
             </Card>
 
+            <UpcomingInterviews />
+
             <Card>
               <h3 className="font-heading font-bold text-lg">Profile Snapshot</h3>
               {profileLoading ? <LoadingSpinner label="Loading profile..." /> : null}
@@ -230,6 +236,21 @@ const StudentDashboard = () => {
                   <p className="text-slate-400">{profile?.bio || 'No bio added yet'}</p>
                 </div>
               ) : null}
+            </Card>
+
+            <Card className="bg-gradient-to-br from-intel-blue/10 to-purple-900/10 border-intel-blue/30">
+              <div className="flex items-center gap-2 mb-2">
+                <span className="inline-flex items-center justify-center w-8 h-8 rounded-full bg-gradient-to-br from-intel-blue to-purple-500 text-white text-sm">
+                  AI
+                </span>
+                <h3 className="font-heading font-bold text-lg">Resume Intelligence</h3>
+              </div>
+              <p className="text-slate-400 text-sm mb-3">
+                Upload your resume and get AI-powered company & job fit percentages — all processed locally.
+              </p>
+              <Button onClick={() => navigate('/resume-intelligence')}>
+                🔍 Analyze My Resume
+              </Button>
             </Card>
           </div>
         </section>

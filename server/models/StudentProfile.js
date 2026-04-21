@@ -36,6 +36,28 @@ const studentProfileSchema = new mongoose.Schema(
       default: 0,
       min: 0,
     },
+    education: [
+      {
+        degree: { type: String, default: '' },
+        institution: { type: String, default: '' },
+        year: { type: Number, default: 0 },
+        field: { type: String, default: '' },
+      },
+    ],
+    projects: [
+      {
+        name: { type: String, default: '' },
+        techStack: { type: [String], default: [] },
+        description: { type: String, default: '' },
+      },
+    ],
+    certifications: {
+      type: [String],
+      default: [],
+    },
+    lastAnalyzedAt: {
+      type: Date,
+    },
   },
   { timestamps: true }
 );
