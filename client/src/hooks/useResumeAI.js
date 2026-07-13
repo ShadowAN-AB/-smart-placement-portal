@@ -127,6 +127,33 @@ export const useResumeAI = () => {
     }
   }, []);
 
+  // ── Fetch persisted chat history ──
+  const fetchChatHistory = useCallback(async () => {
+    try {
+      const data = await apiRequest('/api/ai/chat');
+      const hydrated = (data.messages || []).map((m) => ({
+        type: m.role === 'user' ? 'user' : 'ai',
+        text: m.text,
+        fromContext: m.fromContext ?? undefined,
+        confidence: m.confidence ?? undefined,
+      }));
+      setChatHistory(hydrated);
+      return data;
+    } catch {
+      return null;
+    }
+  }, []);
+
+  // ── Clear persisted chat history ──
+  const clearChat = useCallback(async () => {
+    setChatHistory([]);
+    try {
+      await apiRequest('/api/ai/chat', { method: 'DELETE' });
+    } catch {
+      // Local state already cleared; ignore server failure.
+    }
+  }, []);
+
   // ── Ask AI a question ──
   const askQuestion = useCallback(async (question) => {
     setAskLoading(true);
@@ -190,7 +217,8 @@ export const useResumeAI = () => {
     checkHealth();
     fetchCompanyScores();
     fetchJobScores();
-  }, [fetchStatus, checkHealth, fetchCompanyScores, fetchJobScores]);
+    fetchChatHistory();
+  }, [fetchStatus, checkHealth, fetchCompanyScores, fetchJobScores, fetchChatHistory]);
 
   return {
     // State
@@ -214,7 +242,8 @@ export const useResumeAI = () => {
     askQuestion,
     checkHealth,
     startPolling,
+    fetchChatHistory,
+    clearChat,
     clearError: () => setError(''),
-    clearChat: () => setChatHistory([]),
   };
 };

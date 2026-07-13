@@ -7,6 +7,7 @@ const ResumeUpload = require('../models/ResumeUpload');
 const ResumeAnalysis = require('../models/ResumeAnalysis');
 const StudentProfile = require('../models/StudentProfile');
 const Job = require('../models/Job');
+const ChatMessage = require('../models/ChatMessage');
 const { extractText } = require('../utils/resumeParser');
 const { extractWithAI, checkOllamaHealth } = require('../utils/aiExtractor');
 const { computeCompanyScores, computeJobScores } = require('../utils/companyScorer');
@@ -312,10 +313,50 @@ router.post('/ask', async (req, res) => {
       studentProfile,
     });
 
+    try {
+      await ChatMessage.insertMany([
+        { userId: req.user._id, role: 'user', text: question.trim() },
+        {
+          userId: req.user._id,
+          role: 'assistant',
+          text: result.answer,
+          fromContext: result.fromContext ?? null,
+          confidence: result.confidence ?? null,
+        },
+      ]);
+    } catch (persistError) {
+      console.error('Chat persist failed:', persistError.message);
+    }
+
     res.json(result);
   } catch (error) {
     console.error('Ask error:', error);
     res.status(500).json({ message: error.message || 'Failed to get an answer' });
+  }
+});
+
+// ── Fetch chat history ──
+router.get('/chat', async (req, res) => {
+  try {
+    const limit = Math.min(200, Math.max(1, Number.parseInt(req.query.limit, 10) || 50));
+    const messages = await ChatMessage.find({ userId: req.user._id })
+      .sort({ createdAt: 1 })
+      .limit(limit)
+      .lean();
+
+    res.json({ messages });
+  } catch (error) {
+    res.status(500).json({ message: error.message || 'Failed to fetch chat history' });
+  }
+});
+
+// ── Clear chat history ──
+router.delete('/chat', async (req, res) => {
+  try {
+    const result = await ChatMessage.deleteMany({ userId: req.user._id });
+    res.json({ deleted: result.deletedCount });
+  } catch (error) {
+    res.status(500).json({ message: error.message || 'Failed to clear chat history' });
   }
 });
 

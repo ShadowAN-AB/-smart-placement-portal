@@ -102,7 +102,9 @@ vercel.json     Vercel build/routing config
 | `GET /api/ai/resume/history` | student | last 10 uploads |
 | `GET /api/ai/fit/companies` | student | company-level fit (best job per company) |
 | `GET /api/ai/fit/jobs` | student | per-job fit with matched/missing skills |
-| `POST /api/ai/ask` | student | context-only Q&A over their analysis + top 10 job matches |
+| `POST /api/ai/ask` | student | context-only Q&A over their analysis + top 10 job matches; **persists both user question and assistant reply as `ChatMessage`** |
+| `GET /api/ai/chat` | student | returns persisted chat history (default 50, max 200 via `?limit=`) |
+| `DELETE /api/ai/chat` | student | wipes the current user's chat history |
 
 ### Data model (`server/models/`)
 
@@ -115,7 +117,7 @@ vercel.json     Vercel build/routing config
 - `ResumeAnalysis` — extracted resume data + `companyFitScores[]` + `jobFitScores[]` with 5-factor breakdown.
 - `MatchScore` — cached per `{studentId, jobId}` (unique) for reuse.
 - `LoginEvent` — audit trail.
-- `AdminAnalytics` — a rollup schema keyed by `month`. **Currently defined but not written to** by any route (analytics are computed live). Don't rely on reading it until a writer is added.
+- `ChatMessage` — `{userId, role: user|assistant, text, fromContext?, confidence?}`. Written by `POST /api/ai/ask` (best-effort; persist failure doesn't fail the request). Indexed on `{userId, createdAt}`.
 
 ### Match algorithm (`server/utils/matchAlgorithm.js`)
 
@@ -164,8 +166,7 @@ Pages should call these, not `apiRequest` directly.
 - `useApplications(filters)` — student's own applications.
 - `useInterviews({upcoming, status})` — plus mutators `schedule/reschedule/cancel/completeInterview` that refetch on success.
 - `useProfile()` — student profile with `saveProfile(payload)`.
-- `useResumeAI()` — full lifecycle: upload, analyze, poll status (2 s interval, auto-stops on terminal state), fetch scores, ask questions, maintains local `chatHistory`. On mount it kicks off `fetchStatus`, `checkHealth`, `fetchCompanyScores`, `fetchJobScores` in parallel.
-- `useAnalytics()` — **stub, returns a "planned for next step" error**. `AdminDashboard` bypasses it and calls `apiRequest('/api/admin/analytics')` directly. Either wire the hook up or delete it.
+- `useResumeAI()` — full lifecycle: upload, analyze, poll status (2 s interval, auto-stops on terminal state), fetch scores, ask questions. **Chat history is persisted server-side** — hydrated from `GET /api/ai/chat` on mount; `clearChat` calls `DELETE /api/ai/chat`. On mount it kicks off `fetchStatus`, `checkHealth`, `fetchCompanyScores`, `fetchJobScores`, `fetchChatHistory` in parallel.
 
 ### Styling / design tokens
 
@@ -183,7 +184,6 @@ Use these tokens instead of hardcoding hex values. Formatters in `src/utils/form
 - **`server/uploads/` has real sample PDFs committed** (7 files). Don't add more; on Vercel this path isn't used (goes to `/tmp`).
 - **Env leak history** — commits `cad613b`, `60ac244`, `de1b196` are the scrub trail for a leaked `server/.env`. Treat anything found in old history as compromised and rotate.
 - **Ollama model name mismatch** — `.env.example` says `llama3`, code default is `qwen2.5-coder`. Whatever's in your `.env` wins.
-- **`useAnalytics` is a stub** and `AdminAnalytics` model has no writer — both are incomplete scaffolds waiting to be filled in or removed.
 - **PDF parser API** — `resumeParser.js` uses `new PDFParse(new Uint8Array(buf)).getText()`, which is the class-based API from `pdf-parse` v2. Older `pdf-parse(buf)` functional API won't work.
 - **Duplicate interview prevention** relies on: unique index on `applicationId` + a manual ±30-min window check on the student. Don't remove either; they cover different cases.
 - **No test suite, no server lint** — the only automated quality gate is `npm run lint --prefix client`.
