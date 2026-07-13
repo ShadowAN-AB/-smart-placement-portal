@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 - **Client**: React 19 + Vite 8, Tailwind 3, React Router 7, Recharts. Token in `localStorage['spp_token']`, user in `localStorage['spp_user']`.
 - **Server**: Node.js + Express 5 (CommonJS), Mongoose 9 (MongoDB), JWT + bcryptjs, Multer for uploads, `pdf-parse` + `mammoth` for resume text.
-- **AI**: Local Ollama HTTP API. `OLLAMA_URL` (default `http://localhost:11434`), `OLLAMA_MODEL` (default `qwen2.5-coder` in code; `llama3` in `.env.example` — mismatch, prefer what's set in `.env`). Falls back to regex if the LLM returns malformed JSON — keep the fallback.
+- **AI**: Pluggable LLM provider in `server/utils/llm/`. `LLM_PROVIDER` env selects `ollama` (default, local, no cost) or `anthropic` (cloud, needs `ANTHROPIC_API_KEY` — default model `claude-haiku-4-5-20251001`). All AI code calls `getProvider().generateJSON(...)` / `.generateText(...)` / `.health()`. Adding a new provider = new file in `server/utils/llm/` exporting the same 3-method interface + name, then register in `index.js`. Regex fallback in `aiExtractor.js` stays as the safety net.
 - **Deploy**: Vercel. Static client from `client/dist`; the Express app is re-exported as a serverless function via `api/index.js`. Local dev uses `server/server.js` (calls `app.listen`); Vercel uses `api/index.js` (no listen, `module.exports = app`). **When adding a route, both files must import and mount it.**
 
 ## Commands
@@ -42,7 +42,16 @@ curl http://localhost:5050/api/health
 curl http://localhost:5050/api/ai/health   # requires auth, but useful shape reference
 ```
 
-No test suite exists.
+Server tests (Vitest + Supertest + mongodb-memory-server):
+
+```bash
+npm test --prefix server            # one-shot
+npm run test:watch --prefix server  # watch mode
+```
+
+Tests live in `server/tests/`. `setup.js` spins up an in-memory MongoDB and wipes collections between tests. **Env vars are set at the top of `setup.js`, not in `beforeAll`** — auth modules read `process.env.JWT_SECRET` at import time. CI runs both `server-tests` and `client-lint + build` via `.github/workflows/ci.yml`.
+
+No client test suite yet — deferred.
 
 ## Directory layout
 
@@ -204,4 +213,5 @@ Use these tokens instead of hardcoding hex values. Formatters in `src/utils/form
 - **Ollama model name mismatch** — `.env.example` says `llama3`, code default is `qwen2.5-coder`. Whatever's in your `.env` wins.
 - **PDF parser API** — `resumeParser.js` uses `new PDFParse(new Uint8Array(buf)).getText()`, which is the class-based API from `pdf-parse` v2. Older `pdf-parse(buf)` functional API won't work.
 - **Duplicate interview prevention** relies on: unique index on `applicationId` + a manual ±30-min window check on the student. Don't remove either; they cover different cases.
-- **No test suite, no server lint** — the only automated quality gate is `npm run lint --prefix client`.
+- **Server tests** — `npm test --prefix server` (Vitest 2 with globals enabled — do NOT upgrade to Vitest 4 without switching test files to ESM). Client has no tests yet.
+- **CI** — `.github/workflows/ci.yml` gates PRs on both server tests and client lint + build.

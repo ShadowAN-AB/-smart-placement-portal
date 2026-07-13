@@ -1,7 +1,4 @@
-const getOllamaConfig = () => ({
-  url: process.env.OLLAMA_URL || 'http://localhost:11434',
-  model: process.env.OLLAMA_MODEL || 'qwen2.5-coder',
-});
+const { getProvider } = require('./llm');
 
 const SYSTEM_PROMPT = `You are a resume parser. Extract structured data ONLY from the provided text.
 Do not infer, assume, or add any information not explicitly stated.
@@ -23,36 +20,20 @@ If a field is not found in the text, return an empty array or 0. Return ONLY the
  */
 const extractWithAI = async (resumeText) => {
   try {
-    const { url, model } = getOllamaConfig();
-    const response = await fetch(`${url}/api/generate`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        model,
-        prompt: `Parse the following resume and extract structured data:\n\n---\n${resumeText}\n---`,
-        system: SYSTEM_PROMPT,
-        stream: false,
-        options: {
-          temperature: 0.1,
-          num_predict: 2048,
-        },
-      }),
+    const provider = getProvider();
+    const rawOutput = await provider.generateJSON({
+      system: SYSTEM_PROMPT,
+      prompt: `Parse the following resume and extract structured data:\n\n---\n${resumeText}\n---`,
+      temperature: 0.1,
+      maxTokens: 2048,
     });
 
-    if (!response.ok) {
-      throw new Error(`Ollama returned status ${response.status}`);
-    }
-
-    const data = await response.json();
-    const rawOutput = data.response || '';
-
-    // Try to extract JSON from the response
     const parsed = parseJSONResponse(rawOutput);
     if (parsed) {
       return normalizeExtractedData(parsed);
     }
 
-    console.warn('AI extraction returned malformed JSON, falling back to regex');
+    console.warn(`AI extraction returned malformed JSON (provider=${provider.name}), falling back to regex`);
     return regexFallback(resumeText);
   } catch (error) {
     console.error('AI extraction failed:', error.message);
@@ -229,27 +210,10 @@ const extractCertificationsRegex = (text) => {
 };
 
 /**
- * Check if Ollama is running and the model is available.
+ * Health check for the active LLM provider.
  */
 const checkOllamaHealth = async () => {
-  const { url, model } = getOllamaConfig();
-  try {
-    const response = await fetch(`${url}/api/tags`);
-    if (!response.ok) return { healthy: false, error: 'Ollama server not responding' };
-
-    const data = await response.json();
-    const models = (data.models || []).map((m) => m.name);
-    const hasModel = models.some((m) => m.startsWith(model));
-
-    return {
-      healthy: true,
-      model,
-      modelLoaded: hasModel,
-      availableModels: models,
-    };
-  } catch (error) {
-    return { healthy: false, error: error.message };
-  }
+  return getProvider().health();
 };
 
 module.exports = { extractWithAI, checkOllamaHealth };

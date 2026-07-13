@@ -1,8 +1,4 @@
-// Configured via OLLAMA_URL and OLLAMA_MODEL env vars
-const getOllamaConfig = () => ({
-  url: process.env.OLLAMA_URL || 'http://localhost:11434',
-  model: process.env.OLLAMA_MODEL || 'qwen2.5-coder',
-});
+const { getProvider } = require('./llm');
 
 const SYSTEM_PROMPT = `You are a placement advisor for a college placement portal.
 Answer ONLY using the context provided below.
@@ -29,28 +25,13 @@ const askAssistant = async ({ question, extractedData, topJobs, studentProfile }
   });
 
   try {
-    const { url, model } = getOllamaConfig();
-    const response = await fetch(`${url}/api/generate`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        model,
-        prompt: `${contextPrompt}\n\nQUESTION: ${question}`,
-        system: SYSTEM_PROMPT,
-        stream: false,
-        options: {
-          temperature: 0.3,
-          num_predict: 1024,
-        },
-      }),
+    const provider = getProvider();
+    const answer = await provider.generateText({
+      system: SYSTEM_PROMPT,
+      prompt: `${contextPrompt}\n\nQUESTION: ${question}`,
+      temperature: 0.3,
+      maxTokens: 1024,
     });
-
-    if (!response.ok) {
-      throw new Error(`Ollama returned status ${response.status}`);
-    }
-
-    const data = await response.json();
-    const answer = (data.response || '').trim();
 
     if (!answer) {
       return {
@@ -80,7 +61,7 @@ const askAssistant = async ({ question, extractedData, topJobs, studentProfile }
     console.error('AI Assistant error:', error.message);
     return {
       answer:
-        'The AI assistant is currently unavailable. Please ensure Ollama is running on your machine.',
+        'The AI assistant is currently unavailable. Please check that your configured LLM provider is reachable.',
       fromContext: false,
       confidence: 'none',
       error: error.message,

@@ -190,7 +190,14 @@ Independent from Phase 2; do in any order.
 
 ---
 
-## Phase 4 — Foundational bets
+## Phase 4 — Foundational bets ✅ DONE (Feature 9 fully, Feature 10 server-only)
+
+Shipped:
+- **Feature 9**: `server/utils/llm/` abstraction with `ollamaProvider` and `anthropicProvider`; selected via `LLM_PROVIDER` env. `aiExtractor.js` and `aiAssistant.js` refactored to use `getProvider()`. Regex fallback in extractor stays. `@anthropic-ai/sdk` installed. `.env.example` updated.
+- **Feature 10 (partial)**: Server test scaffolding in place — Vitest 2 + Supertest + mongodb-memory-server; 20 passing tests across auth, applications (single + bulk), interviews (schedule/conflict/cancel), and match algorithm. GitHub Actions CI (`.github/workflows/ci.yml`) runs server tests, client lint, and client build on PRs to main.
+- Refactor: extracted `server/app.js` factory so `server.js`, `api/index.js`, and tests share the same route wiring.
+
+**Deferred**: client-side tests (Vitest + Testing Library + MSW). Different tooling stack, own PR.
 
 These enable everything else. Consider #9 before deploying anywhere non-local.
 
