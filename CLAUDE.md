@@ -72,6 +72,8 @@ vercel.json     Vercel build/routing config
 | `POST /api/auth/signup` | public | body: `{name,email,password,role,adminCode?}` |
 | `POST /api/auth/login` | public | body: `{email,password}` → `{token,user}` |
 | `GET /api/auth/me` | any | returns `req.user` |
+| `POST /api/auth/forgot-password` | public | **rate-limited 5/hr per IP**; always returns 200 to avoid leaking account existence; emails reset link if user exists |
+| `POST /api/auth/reset-password` | public | `{token,newPassword}`; token expires in 1 hour and is single-use (marked `usedAt`) |
 | `GET /api/students/profile` | student | returns default shape if no doc exists |
 | `PUT /api/students/profile` | student | upserts; validates bio ≤500 chars, numeric fields ≥0 |
 | `POST /api/students/profile/resume` | student | `{resumeUrl}` — must be `http(s)://…` |
@@ -83,21 +85,21 @@ vercel.json     Vercel build/routing config
 | `POST /api/applications` | student | duplicate protected by `{studentId,jobId}` unique index; also upserts a `MatchScore` doc |
 | `GET /api/applications/my-applications` | student | paged, populates job |
 | `GET /api/applications/job/:jobId` | recruiter | owner only; filters: `search, status, minMatchScore, skill, sortBy(matchScore\|appliedAt), order` |
-| `PUT /api/applications/:appId/status` | recruiter | status ∈ `pending, shortlisted, rejected, interview` |
-| `POST /api/interviews` | recruiter | requires future `scheduledAt`; **duration clamped to [15,180]**; **rejects if student has another `scheduled` interview within ±30 min buffer**; sets application status → `interview` |
+| `PUT /api/applications/:appId/status` | recruiter | status ∈ `pending, shortlisted, rejected, interview`; **notifies student** |
+| `POST /api/interviews` | recruiter | requires future `scheduledAt`; **duration clamped to [15,180]**; **rejects if student has another `scheduled` interview within ±30 min buffer**; sets application status → `interview`; **fires emails (with `.ics`) + in-app notifications to both parties (fire-and-forget)** |
 | `GET /api/interviews` | any | scoped by role (student sees own, recruiter sees own); `?upcoming=true` forces `status=scheduled` + future |
 | `GET /api/interviews/:id` | student/recruiter of that interview, or admin | |
-| `PUT /api/interviews/:id/reschedule` | recruiter owner | can't reschedule `completed`/`cancelled` |
-| `PUT /api/interviews/:id/cancel` | recruiter owner | reverts application status → `shortlisted` |
+| `PUT /api/interviews/:id/reschedule` | recruiter owner | can't reschedule `completed`/`cancelled`; fires reschedule email + notifications |
+| `PUT /api/interviews/:id/cancel` | recruiter owner | reverts application status → `shortlisted`; fires cancel email + notifications |
 | `PUT /api/interviews/:id/complete` | recruiter owner | records `feedback`, `rating` (1–5 clamped) |
 | `GET /api/interviews/:id/calendar` | authorized viewer | returns `.ics`; supports `?token=` for direct browser download |
 | `GET /api/interviews/slots/:recruiterId` | any | `?date=YYYY-MM-DD`, returns 30-min slots 9 AM–6 PM UTC with `available` flag |
 | `GET /api/admin/analytics` | admin | totals, placement rate (`shortlisted`+`interview`/total apps), avg package, top 5 companies, 12-month trend, recent placements |
 | `GET /api/admin/approvals` | admin | jobs with `approved: false`, paged |
-| `POST /api/admin/approve-job/:jobId` | admin | flips `approved: true` |
+| `POST /api/admin/approve-job/:jobId` | admin | flips `approved: true`; **notifies posting recruiter** |
 | `GET /api/ai/health` | student | Ollama reachability + model-loaded check |
 | `POST /api/ai/resume/upload` | student | multipart `resume` field, PDF/DOCX only, ≤10 MB. Auto-versioned per user via `pre('save')` hook. |
-| `POST /api/ai/resume/analyze` | student | full pipeline: extract text → Ollama → save `ResumeAnalysis` → **upserts extracted `skills`/`education`/`projects`/`certifications` back into `StudentProfile`** |
+| `POST /api/ai/resume/analyze` | student | full pipeline: extract text → Ollama → save `ResumeAnalysis` → **upserts extracted `skills`/`education`/`projects`/`certifications` back into `StudentProfile`**; **notifies student when done** |
 | `GET /api/ai/resume/status` | student | latest upload state |
 | `GET /api/ai/resume/history` | student | last 10 uploads |
 | `GET /api/ai/fit/companies` | student | company-level fit (best job per company) |
@@ -105,6 +107,9 @@ vercel.json     Vercel build/routing config
 | `POST /api/ai/ask` | student | context-only Q&A over their analysis + top 10 job matches; **persists both user question and assistant reply as `ChatMessage`** |
 | `GET /api/ai/chat` | student | returns persisted chat history (default 50, max 200 via `?limit=`) |
 | `DELETE /api/ai/chat` | student | wipes the current user's chat history |
+| `GET /api/notifications` | any | paged; `?unreadOnly=true`; returns `{items, unreadCount, total, totalPages}` |
+| `POST /api/notifications/:id/read` | any | owner only |
+| `POST /api/notifications/read-all` | any | marks all current user's unread → read |
 
 ### Data model (`server/models/`)
 
@@ -118,6 +123,8 @@ vercel.json     Vercel build/routing config
 - `MatchScore` — cached per `{studentId, jobId}` (unique) for reuse.
 - `LoginEvent` — audit trail.
 - `ChatMessage` — `{userId, role: user|assistant, text, fromContext?, confidence?}`. Written by `POST /api/ai/ask` (best-effort; persist failure doesn't fail the request). Indexed on `{userId, createdAt}`.
+- `Notification` — `{userId, type, title, body, link?, read, meta}`. `type` enum covers application/interview/resume/job events. Indexed on `{userId, read, createdAt: -1}`. Written by `utils/notifier.js` (best-effort).
+- `PasswordResetToken` — `{userId, tokenHash, expiresAt, usedAt?}`. Token stored as SHA-256 hash, never plaintext. TTL index on `expiresAt` auto-deletes expired records.
 
 ### Match algorithm (`server/utils/matchAlgorithm.js`)
 
@@ -137,6 +144,13 @@ If you change the enhanced factor weights or shape, `models/ResumeAnalysis.js`'s
    - `utils/companyScorer.js` → `computeCompanyScores` (best job per company) and `computeJobScores` (all jobs), both using `calculateEnhancedMatchScore`.
    - Persists `ResumeAnalysis` (upsert on `{userId, resumeId}`), **and merges extracted data back into `StudentProfile`** via `$set` on education/projects/certifications and `$addToSet` on skills.
 3. `POST /api/ai/ask` — `utils/aiAssistant.js` builds a context block (resume data + top 10 jobs by score + scoring rubric), forces context-only answers with `temperature: 0.3`, and heuristically flags low confidence when the reply contains "don't have enough information" etc.
+
+### Communications (email + in-app notifications)
+
+- **Email** goes through `utils/mailer.js` (nodemailer). If `SMTP_HOST` is unset, emails are silently logged to stdout via `jsonTransport` — dev works without any SMTP setup. Templates live in `utils/emailTemplates.js` and are HTML-escaped. Callers **must fire-and-forget** with `.catch()` — email failures never block API responses.
+- **In-app notifications** go through `utils/notifier.js` → `Notification` model. Same fire-and-forget rule. The client polls `/api/notifications` every 30s while the tab is visible (see `useNotifications`); replace with websockets in Phase 5.
+- Interview lifecycle emits **both** email and notification; other events (application status, resume analysis, job approval) emit only notifications.
+- Password reset uses `PasswordResetToken` (SHA-256 hash of the raw token stored; raw token only in the email link). Rate-limited to 5/hr per IP via `express-rate-limit`. Always returns 200 to avoid leaking whether an email exists.
 
 ### Vercel routing quirk
 
@@ -167,6 +181,7 @@ Pages should call these, not `apiRequest` directly.
 - `useInterviews({upcoming, status})` — plus mutators `schedule/reschedule/cancel/completeInterview` that refetch on success.
 - `useProfile()` — student profile with `saveProfile(payload)`.
 - `useResumeAI()` — full lifecycle: upload, analyze, poll status (2 s interval, auto-stops on terminal state), fetch scores, ask questions. **Chat history is persisted server-side** — hydrated from `GET /api/ai/chat` on mount; `clearChat` calls `DELETE /api/ai/chat`. On mount it kicks off `fetchStatus`, `checkHealth`, `fetchCompanyScores`, `fetchJobScores`, `fetchChatHistory` in parallel.
+- `useNotifications()` — 30 s poll while tab is visible, pauses on `visibilitychange`. Exposes `{items, unreadCount, markRead, markAllRead}`. Both mark actions update local state optimistically then hit the server. Used by `NotificationBell` in all three dashboard headers.
 
 ### Styling / design tokens
 

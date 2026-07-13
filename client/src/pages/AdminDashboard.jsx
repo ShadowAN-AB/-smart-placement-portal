@@ -12,6 +12,7 @@ import {
 import Button from '../components/common/Button';
 import Card from '../components/common/Card';
 import LoadingSpinner from '../components/common/LoadingSpinner';
+import NotificationBell from '../components/NotificationBell';
 import { useAuth } from '../context/AuthContext';
 import { apiRequest } from '../utils/api';
 import { formatLPA } from '../utils/formatters';
@@ -69,7 +70,10 @@ const AdminDashboard = () => {
             <h1 className="text-3xl font-heading font-bold">Welcome, {user?.name}</h1>
             <p className="text-slate-400">Role: {user?.role}</p>
           </div>
-          <Button variant="secondary" onClick={logout}>Logout</Button>
+          <div className="flex items-center gap-3">
+            <NotificationBell />
+            <Button variant="secondary" onClick={logout}>Logout</Button>
+          </div>
         </header>
 
         {loading ? <LoadingSpinner label="Loading analytics..." /> : null}

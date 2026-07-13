@@ -2,6 +2,8 @@ import { Navigate, Route, Routes } from 'react-router-dom';
 import { useAuth } from './context/AuthContext';
 import ProtectedRoute from './components/ProtectedRoute';
 import AuthPage from './pages/AuthPage';
+import ForgotPasswordPage from './pages/ForgotPasswordPage';
+import ResetPasswordPage from './pages/ResetPasswordPage';
 import StudentDashboard from './pages/StudentDashboard';
 import RecruiterDashboard from './pages/RecruiterDashboard';
 import JobDetailPage from './pages/JobDetailPage';
@@ -34,6 +36,8 @@ function App() {
         }
       />
       <Route path="/auth" element={<AuthPage />} />
+      <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+      <Route path="/reset-password" element={<ResetPasswordPage />} />
       <Route
         path="/dashboard/student"
         element={

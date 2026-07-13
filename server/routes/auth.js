@@ -1,13 +1,28 @@
+const crypto = require('crypto');
 const express = require('express');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
+const rateLimit = require('express-rate-limit');
 const User = require('../models/User');
 const LoginEvent = require('../models/LoginEvent');
+const PasswordResetToken = require('../models/PasswordResetToken');
 const { authMiddleware } = require('../middleware/auth');
+const { sendMail } = require('../utils/mailer');
+const { passwordReset: passwordResetTemplate } = require('../utils/emailTemplates');
 
 const router = express.Router();
 const jwtSecret = process.env.JWT_SECRET || 'dev_jwt_secret_change_me';
 const adminSignupCode = process.env.ADMIN_SIGNUP_CODE || 'placement_admin_2026';
+
+const forgotPasswordLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000, // 1 hour
+  max: 5,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { message: 'Too many password reset requests. Try again later.' },
+});
+
+const hashToken = (token) => crypto.createHash('sha256').update(token).digest('hex');
 
 const generateToken = (userId) => {
   return jwt.sign({ userId }, jwtSecret, { expiresIn: '7d' });
@@ -109,6 +124,74 @@ router.post('/login', async (req, res) => {
 
 router.get('/me', authMiddleware, async (req, res) => {
   return res.json({ user: req.user });
+});
+
+// ── Forgot password: always 200 to avoid leaking account existence ──
+router.post('/forgot-password', forgotPasswordLimiter, async (req, res) => {
+  try {
+    const email = String(req.body.email || '').trim().toLowerCase();
+    if (!email) {
+      return res.status(400).json({ message: 'Email is required' });
+    }
+
+    const user = await User.findOne({ email });
+    if (user) {
+      const rawToken = crypto.randomBytes(32).toString('hex');
+      await PasswordResetToken.create({
+        userId: user._id,
+        tokenHash: hashToken(rawToken),
+        expiresAt: new Date(Date.now() + 60 * 60 * 1000), // 1 hour
+      });
+
+      const appUrl = process.env.APP_URL || 'http://localhost:5173';
+      const resetUrl = `${appUrl.replace(/\/$/, '')}/reset-password?token=${rawToken}`;
+
+      const template = passwordResetTemplate({ name: user.name, resetUrl });
+      sendMail({ to: user.email, ...template }).catch((error) => {
+        console.error('[auth] password reset email failed:', error.message);
+      });
+    }
+
+    return res.json({ message: 'If an account exists for that email, a reset link has been sent.' });
+  } catch (error) {
+    console.error('Forgot password error:', error);
+    return res.status(500).json({ message: 'Failed to process request' });
+  }
+});
+
+// ── Reset password using a valid token ──
+router.post('/reset-password', async (req, res) => {
+  try {
+    const { token, newPassword } = req.body;
+    if (!token || !newPassword) {
+      return res.status(400).json({ message: 'token and newPassword are required' });
+    }
+
+    if (String(newPassword).length < 6) {
+      return res.status(400).json({ message: 'Password must be at least 6 characters' });
+    }
+
+    const record = await PasswordResetToken.findOne({ tokenHash: hashToken(String(token)) });
+    if (!record || record.usedAt || record.expiresAt < new Date()) {
+      return res.status(400).json({ message: 'Invalid or expired token' });
+    }
+
+    const user = await User.findById(record.userId);
+    if (!user) {
+      return res.status(400).json({ message: 'Invalid or expired token' });
+    }
+
+    user.passwordHash = await bcrypt.hash(newPassword, 10);
+    await user.save();
+
+    record.usedAt = new Date();
+    await record.save();
+
+    return res.json({ message: 'Password updated successfully' });
+  } catch (error) {
+    console.error('Reset password error:', error);
+    return res.status(500).json({ message: 'Failed to reset password' });
+  }
 });
 
 module.exports = router;

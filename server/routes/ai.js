@@ -12,6 +12,7 @@ const { extractText } = require('../utils/resumeParser');
 const { extractWithAI, checkOllamaHealth } = require('../utils/aiExtractor');
 const { computeCompanyScores, computeJobScores } = require('../utils/companyScorer');
 const { askAssistant } = require('../utils/aiAssistant');
+const { notify } = require('../utils/notifier');
 
 const router = express.Router();
 
@@ -176,6 +177,14 @@ router.post('/resume/analyze', async (req, res) => {
 
     resumeUpload.status = 'analyzed';
     await resumeUpload.save();
+
+    notify(req.user._id, {
+      type: 'resume_analyzed',
+      title: 'Resume analysis complete',
+      body: `We scored ${jobFitScores.length} job(s) against your resume. Open Resume Intelligence to see your top matches.`,
+      link: '/resume-intelligence',
+      meta: { resumeId: resumeUpload._id, jobsScored: jobFitScores.length },
+    }).catch(() => {});
 
     res.json({
       message: 'Resume analyzed successfully',

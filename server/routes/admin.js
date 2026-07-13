@@ -3,6 +3,7 @@ const { authMiddleware, requireRole } = require('../middleware/auth');
 const User = require('../models/User');
 const Job = require('../models/Job');
 const Application = require('../models/Application');
+const { notify } = require('../utils/notifier');
 
 const router = express.Router();
 
@@ -121,6 +122,14 @@ router.post('/approve-job/:jobId', authMiddleware, requireRole('admin'), async (
 
     job.approved = true;
     await job.save();
+
+    notify(job.postedBy, {
+      type: 'job_approved',
+      title: 'Job approved',
+      body: `${job.title} at ${job.company} is now live and visible to students.`,
+      link: `/jobs/${job._id}`,
+      meta: { jobId: job._id },
+    }).catch(() => {});
 
     return res.json({ message: 'Job approved', job });
   } catch (error) {

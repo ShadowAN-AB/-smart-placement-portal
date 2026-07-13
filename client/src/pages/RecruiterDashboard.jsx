@@ -8,6 +8,7 @@ import Button from '../components/common/Button';
 import Card from '../components/common/Card';
 import LoadingSpinner from '../components/common/LoadingSpinner';
 import Modal from '../components/common/Modal';
+import NotificationBell from '../components/NotificationBell';
 import { useAuth } from '../context/AuthContext';
 import { useInterviews } from '../hooks/useInterviews';
 import { useJobs } from '../hooks/useJobs';
@@ -213,7 +214,8 @@ const RecruiterDashboard = () => {
             <h1 className="text-3xl font-heading font-bold">Welcome, {user?.name}</h1>
             <p className="text-slate-400">Role: {user?.role}</p>
           </div>
-          <div className="flex gap-3">
+          <div className="flex items-center gap-3">
+            <NotificationBell />
             <Button variant="ghost" onClick={() => navigate('/interviews')}>📅 Interviews</Button>
             <Button variant="secondary" onClick={logout}>Logout</Button>
           </div>

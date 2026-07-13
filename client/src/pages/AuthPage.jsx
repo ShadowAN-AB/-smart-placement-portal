@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { apiRequest } from '../utils/api';
 
@@ -225,6 +225,14 @@ const AuthPage = () => {
             >
               {loading ? 'Please wait...' : mode === 'signup' ? 'Create Account' : 'Login'}
             </button>
+
+            {mode === 'login' ? (
+              <p className="text-center text-sm text-slate-400">
+                <Link to="/forgot-password" className="text-intel-blue-light hover:text-intel-blue">
+                  Forgot password?
+                </Link>
+              </p>
+            ) : null}
           </form>
         </section>
       </div>

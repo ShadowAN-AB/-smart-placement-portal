@@ -9,6 +9,7 @@ const applicationRoutes = require('./routes/applications');
 const adminRoutes = require('./routes/admin');
 const aiRoutes = require('./routes/ai');
 const interviewRoutes = require('./routes/interviews');
+const notificationRoutes = require('./routes/notifications');
 
 dotenv.config();
 
@@ -31,6 +32,7 @@ app.use('/api/applications', applicationRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/ai', aiRoutes);
 app.use('/api/interviews', interviewRoutes);
+app.use('/api/notifications', notificationRoutes);
 
 app.use((err, _req, res, _next) => {
   console.error(err);

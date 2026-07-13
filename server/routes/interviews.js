@@ -6,8 +6,113 @@ const Application = require('../models/Application');
 const Job = require('../models/Job');
 const User = require('../models/User');
 const { generateICS } = require('../utils/icsGenerator');
+const { sendMail } = require('../utils/mailer');
+const {
+  interviewScheduled: interviewScheduledTemplate,
+  interviewRescheduled: interviewRescheduledTemplate,
+  interviewCancelled: interviewCancelledTemplate,
+} = require('../utils/emailTemplates');
+const { notify } = require('../utils/notifier');
 
 const router = express.Router();
+
+const buildInterviewIcs = ({ interview, job, student, recruiter }) => {
+  const title = `Interview: ${job?.title || 'Position'} at ${job?.company || 'Company'}`;
+  const description = [
+    `Role: ${job?.title || '-'}`,
+    `Company: ${job?.company || '-'}`,
+    `Candidate: ${student?.name || '-'}`,
+    `Type: ${interview.meetingType}`,
+    interview.meetingLink ? `Join: ${interview.meetingLink}` : '',
+    interview.notes ? `Notes: ${interview.notes}` : '',
+  ].filter(Boolean).join('\\n');
+
+  const locationStr = interview.meetingType === 'video'
+    ? interview.meetingLink || 'Online'
+    : interview.location || 'TBD';
+
+  return generateICS({
+    title,
+    start: interview.scheduledAt,
+    durationMin: interview.duration,
+    description,
+    location: locationStr,
+    organizer: recruiter?.email,
+    attendee: student?.email,
+  });
+};
+
+const dispatchInterviewEmails = async ({ event, interview, job, student, recruiter, reason }) => {
+  try {
+    const templateFn = event === 'scheduled'
+      ? interviewScheduledTemplate
+      : event === 'rescheduled'
+        ? interviewRescheduledTemplate
+        : interviewCancelledTemplate;
+
+    const studentTemplate = templateFn({ role: 'student', interview, job, student, recruiter, reason });
+    const recruiterTemplate = templateFn({ role: 'recruiter', interview, job, student, recruiter, reason });
+
+    const attachments = event === 'cancelled' ? [] : [{
+      filename: `interview-${interview._id}.ics`,
+      content: buildInterviewIcs({ interview, job, student, recruiter }),
+      contentType: 'text/calendar; charset=utf-8',
+    }];
+
+    await Promise.all([
+      sendMail({ to: student?.email, ...studentTemplate, attachments }),
+      sendMail({ to: recruiter?.email, ...recruiterTemplate, attachments }),
+    ]);
+  } catch (error) {
+    console.error(`[interviews] email dispatch failed (${event}):`, error.message);
+  }
+};
+
+const notifyInterviewParties = async ({ event, interview, job, student, recruiter, reason }) => {
+  const whenStr = new Date(interview.scheduledAt).toLocaleString('en-IN', {
+    day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: true,
+  });
+
+  const eventCopy = {
+    scheduled: {
+      type: 'interview_scheduled',
+      studentTitle: 'Interview scheduled',
+      recruiterTitle: 'Interview scheduled with candidate',
+      body: `${job?.title} at ${job?.company} — ${whenStr}`,
+    },
+    rescheduled: {
+      type: 'interview_rescheduled',
+      studentTitle: 'Interview rescheduled',
+      recruiterTitle: 'Interview rescheduled with candidate',
+      body: `${job?.title} at ${job?.company} — new time ${whenStr}`,
+    },
+    cancelled: {
+      type: 'interview_cancelled',
+      studentTitle: 'Interview cancelled',
+      recruiterTitle: 'Interview cancelled',
+      body: `${job?.title} at ${job?.company}${reason ? ` — ${reason}` : ''}`,
+    },
+  }[event];
+
+  if (!eventCopy) return;
+
+  await Promise.all([
+    notify(interview.studentId, {
+      type: eventCopy.type,
+      title: eventCopy.studentTitle,
+      body: eventCopy.body,
+      link: '/interviews',
+      meta: { interviewId: interview._id },
+    }),
+    notify(interview.recruiterId, {
+      type: eventCopy.type,
+      title: eventCopy.recruiterTitle,
+      body: eventCopy.body,
+      link: '/interviews',
+      meta: { interviewId: interview._id },
+    }),
+  ]);
+};
 
 router.use(authMiddleware);
 
@@ -80,6 +185,23 @@ router.post('/', requireRole('recruiter'), async (req, res) => {
     // Update application status to 'interview'
     application.status = 'interview';
     await application.save();
+
+    // Fire-and-forget email + in-app notifications
+    (async () => {
+      try {
+        const [student, recruiter] = await Promise.all([
+          User.findById(application.studentId).select('name email').lean(),
+          User.findById(req.user._id).select('name email').lean(),
+        ]);
+        const job = { title: application.jobId.title, company: application.jobId.company };
+        await Promise.all([
+          dispatchInterviewEmails({ event: 'scheduled', interview, job, student, recruiter }),
+          notifyInterviewParties({ event: 'scheduled', interview, job, student, recruiter }),
+        ]);
+      } catch (error) {
+        console.error('[interviews] post-schedule side effects failed:', error.message);
+      }
+    })();
 
     return res.status(201).json({ message: 'Interview scheduled', interview });
   } catch (error) {
@@ -203,6 +325,22 @@ router.put('/:interviewId/reschedule', requireRole('recruiter'), async (req, res
 
     await interview.save();
 
+    (async () => {
+      try {
+        const [student, recruiter, job] = await Promise.all([
+          User.findById(interview.studentId).select('name email').lean(),
+          User.findById(interview.recruiterId).select('name email').lean(),
+          Job.findById(interview.jobId).select('title company').lean(),
+        ]);
+        await Promise.all([
+          dispatchInterviewEmails({ event: 'rescheduled', interview, job, student, recruiter }),
+          notifyInterviewParties({ event: 'rescheduled', interview, job, student, recruiter }),
+        ]);
+      } catch (error) {
+        console.error('[interviews] post-reschedule side effects failed:', error.message);
+      }
+    })();
+
     return res.json({ message: 'Interview rescheduled', interview });
   } catch (error) {
     return res.status(500).json({ message: 'Failed to reschedule interview' });
@@ -238,6 +376,22 @@ router.put('/:interviewId/cancel', requireRole('recruiter'), async (req, res) =>
 
     // Revert application status to shortlisted
     await Application.findByIdAndUpdate(interview.applicationId, { status: 'shortlisted' });
+
+    (async () => {
+      try {
+        const [student, recruiter, job] = await Promise.all([
+          User.findById(interview.studentId).select('name email').lean(),
+          User.findById(interview.recruiterId).select('name email').lean(),
+          Job.findById(interview.jobId).select('title company').lean(),
+        ]);
+        await Promise.all([
+          dispatchInterviewEmails({ event: 'cancelled', interview, job, student, recruiter, reason: interview.cancelReason }),
+          notifyInterviewParties({ event: 'cancelled', interview, job, student, recruiter, reason: interview.cancelReason }),
+        ]);
+      } catch (error) {
+        console.error('[interviews] post-cancel side effects failed:', error.message);
+      }
+    })();
 
     return res.json({ message: 'Interview cancelled', interview });
   } catch (error) {

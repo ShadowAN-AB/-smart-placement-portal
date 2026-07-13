@@ -10,6 +10,7 @@ import { useApplications } from '../hooks/useApplications';
 import { useJobs } from '../hooks/useJobs';
 import { useProfile } from '../hooks/useProfile';
 import UpcomingInterviews from '../components/UpcomingInterviews';
+import NotificationBell from '../components/NotificationBell';
 import { apiRequest } from '../utils/api';
 import { formatDateShort } from '../utils/formatters';
 
@@ -88,7 +89,8 @@ const StudentDashboard = () => {
             <h1 className="text-3xl font-heading font-bold">Welcome, {user?.name}</h1>
             <p className="text-slate-400">Role: {user?.role}</p>
           </div>
-          <div className="flex gap-3">
+          <div className="flex items-center gap-3">
+            <NotificationBell />
             <Button variant="ghost" onClick={seedProfile}>
               Auto Fill Profile
             </Button>

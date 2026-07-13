@@ -54,7 +54,9 @@ Index `{userId: 1, createdAt: 1}`.
 
 ---
 
-## Phase 2 — Communications infrastructure
+## Phase 2 — Communications infrastructure ✅ DONE
+
+Shipped: nodemailer-based `mailer.js` (SMTP if `SMTP_HOST` set, stdout log otherwise); `Notification` model + `notifier.js` + `/api/notifications` route; `PasswordResetToken` model + `/api/auth/forgot-password` (rate-limited 5/hr) + `/api/auth/reset-password`; interview email templates (schedule/reschedule/cancel) with `.ics` attached; `useNotifications` hook + `NotificationBell` component wired into all three dashboards; ForgotPassword + ResetPassword pages.
 
 Both #2 and #5 need email. Set the provider up once, ship both.
 

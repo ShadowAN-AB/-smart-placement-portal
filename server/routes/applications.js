@@ -6,6 +6,7 @@ const Job = require('../models/Job');
 const StudentProfile = require('../models/StudentProfile');
 const MatchScore = require('../models/MatchScore');
 const { calculateMatchScore } = require('../utils/matchAlgorithm');
+const { notify } = require('../utils/notifier');
 
 const router = express.Router();
 
@@ -201,6 +202,14 @@ router.put('/:appId/status', authMiddleware, requireRole('recruiter'), async (re
 
     application.status = status;
     await application.save();
+
+    notify(application.studentId, {
+      type: 'application_status',
+      title: `Application ${status}`,
+      body: `${application.jobId?.title || 'A job'} at ${application.jobId?.company || 'a company'} — status changed to ${status}`,
+      link: `/jobs/${application.jobId?._id || application.jobId}`,
+      meta: { applicationId: application._id, newStatus: status },
+    }).catch(() => {});
 
     return res.json({ message: 'Application status updated', application });
   } catch (error) {
