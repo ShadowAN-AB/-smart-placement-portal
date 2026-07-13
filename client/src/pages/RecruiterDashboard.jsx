@@ -21,6 +21,8 @@ const RecruiterDashboard = () => {
   const { jobs, loading, error, refetchJobs } = useJobs();
   const { interviews, scheduleInterview, refetchInterviews } = useInterviews();
   const [scheduleModal, setScheduleModal] = useState({ open: false, application: null });
+  const [selectedIds, setSelectedIds] = useState(() => new Set());
+  const [bulkLoading, setBulkLoading] = useState(false);
   const [applicantsState, setApplicantsState] = useState({
     open: false,
     jobTitle: '',
@@ -79,6 +81,7 @@ const RecruiterDashboard = () => {
         totalPages: data.totalPages || 1,
         total: data.total || 0,
       }));
+      setSelectedIds(new Set());
     } catch (err) {
       setApplicantsState((prev) => ({
         ...prev,
@@ -180,6 +183,59 @@ const RecruiterDashboard = () => {
       ...prev,
       rows: prev.rows.map((row) => (row._id === applicationId ? { ...row, status } : row)),
     }));
+  };
+
+  const toggleRowSelected = (appId) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(appId)) next.delete(appId);
+      else next.add(appId);
+      return next;
+    });
+  };
+
+  const togglePageSelected = () => {
+    const pageIds = applicantsState.rows.map((row) => row._id);
+    const allSelected = pageIds.every((id) => selectedIds.has(id));
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (allSelected) pageIds.forEach((id) => next.delete(id));
+      else pageIds.forEach((id) => next.add(id));
+      return next;
+    });
+  };
+
+  const bulkUpdateStatus = async (status) => {
+    const appIds = [...selectedIds];
+    if (appIds.length === 0) return;
+
+    setBulkLoading(true);
+    // Optimistic update
+    setApplicantsState((prev) => ({
+      ...prev,
+      rows: prev.rows.map((row) => (selectedIds.has(row._id) ? { ...row, status } : row)),
+    }));
+
+    try {
+      await apiRequest('/api/applications/bulk-status', {
+        method: 'POST',
+        body: JSON.stringify({ appIds, status }),
+      });
+      setSelectedIds(new Set());
+    } catch (err) {
+      // Roll back by refetching the current page
+      if (applicantsState.jobId) {
+        await loadApplicants({
+          jobId: applicantsState.jobId,
+          page: applicantsState.page,
+          filters: applicantsState.filters,
+          jobTitle: applicantsState.jobTitle,
+        });
+      }
+      setApplicantsState((prev) => ({ ...prev, error: err.message || 'Bulk update failed' }));
+    } finally {
+      setBulkLoading(false);
+    }
   };
 
   const openScheduleModal = (application) => {
@@ -324,10 +380,60 @@ const RecruiterDashboard = () => {
 
           {!applicantsState.loading && applicantsState.rows.length > 0 ? (
             <>
+              {selectedIds.size > 0 ? (
+                <div className="mb-3 flex flex-wrap items-center gap-3 bg-intel-blue/10 border border-intel-blue/30 rounded-portal px-3 py-2">
+                  <span className="text-sm text-slate-100">
+                    {selectedIds.size} selected
+                  </span>
+                  <Button
+                    className="text-xs px-3 py-1"
+                    disabled={bulkLoading}
+                    onClick={() => bulkUpdateStatus('shortlisted')}
+                  >
+                    Shortlist all
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    className="text-xs px-3 py-1"
+                    disabled={bulkLoading}
+                    onClick={() => bulkUpdateStatus('interview')}
+                  >
+                    Move to Interview
+                  </Button>
+                  <Button
+                    variant="danger"
+                    className="text-xs px-3 py-1"
+                    disabled={bulkLoading}
+                    onClick={() => bulkUpdateStatus('rejected')}
+                  >
+                    Reject all
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    className="text-xs px-3 py-1 ml-auto"
+                    onClick={() => setSelectedIds(new Set())}
+                  >
+                    Clear selection
+                  </Button>
+                </div>
+              ) : null}
+
               <div className="overflow-x-auto">
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="text-left text-slate-400 border-b border-slate-800">
+                      <th className="py-2 w-8">
+                        <input
+                          type="checkbox"
+                          aria-label="Select all on this page"
+                          checked={
+                            applicantsState.rows.length > 0 &&
+                            applicantsState.rows.every((row) => selectedIds.has(row._id))
+                          }
+                          onChange={togglePageSelected}
+                          className="accent-intel-blue"
+                        />
+                      </th>
                       <th className="py-2">Student</th>
                       <th className="py-2">Email</th>
                       <th className="py-2">Match</th>
@@ -338,7 +444,16 @@ const RecruiterDashboard = () => {
                   </thead>
                   <tbody>
                     {applicantsState.rows.map((row) => (
-                      <tr key={row._id} className="border-b border-slate-800/70">
+                      <tr key={row._id} className={`border-b border-slate-800/70 ${selectedIds.has(row._id) ? 'bg-intel-blue/5' : ''}`}>
+                        <td className="py-3">
+                          <input
+                            type="checkbox"
+                            checked={selectedIds.has(row._id)}
+                            onChange={() => toggleRowSelected(row._id)}
+                            className="accent-intel-blue"
+                            aria-label={`Select ${row.studentId?.name || 'applicant'}`}
+                          />
+                        </td>
                         <td className="py-3">{row.studentId?.name || '-'}</td>
                         <td className="py-3 text-slate-300">{row.studentId?.email || '-'}</td>
                         <td className="py-3">{Math.round(row.matchScore || 0)}%</td>

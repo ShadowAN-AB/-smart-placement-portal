@@ -1,9 +1,11 @@
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import AskAssistant from '../components/AskAssistant';
 import Button from '../components/common/Button';
 import Card from '../components/common/Card';
 import LoadingSpinner from '../components/common/LoadingSpinner';
+import Modal from '../components/common/Modal';
+import ResumeCompareView from '../components/ResumeCompareView';
 import { useAuth } from '../context/AuthContext';
 import { useResumeAI } from '../hooks/useResumeAI';
 
@@ -106,6 +108,9 @@ const ResumeIntelligence = () => {
   const [dragActive, setDragActive] = useState(false);
   const [expandedCompany, setExpandedCompany] = useState(null);
   const [showAllJobs, setShowAllJobs] = useState(false);
+  const [versions, setVersions] = useState([]);
+  const [compareOpen, setCompareOpen] = useState(false);
+  const [comparePair, setComparePair] = useState({ a: '', b: '' });
 
   const {
     uploading, analyzing, status, companyScores, jobScores,
@@ -113,7 +118,23 @@ const ResumeIntelligence = () => {
     askLoading, chatHistory,
     uploadResume, analyzeResume, askQuestion,
     clearError, clearChat, startPolling,
+    fetchVersions, compareResumes,
   } = useResumeAI();
+
+  const refreshVersions = useCallback(async () => {
+    const list = await fetchVersions();
+    setVersions(list);
+    return list;
+  }, [fetchVersions]);
+
+  useEffect(() => { refreshVersions(); }, [refreshVersions]);
+  useEffect(() => { if (status?.status === 'analyzed') refreshVersions(); }, [status?.status, refreshVersions]);
+
+  const openCompare = () => {
+    if (versions.length < 2) return;
+    setComparePair({ a: versions[1].resumeId, b: versions[0].resumeId });
+    setCompareOpen(true);
+  };
 
   // ── Average score ──
   const avgScore = useMemo(() => {
@@ -203,6 +224,14 @@ const ResumeIntelligence = () => {
                 {ollamaHealth?.healthy ? `AI: ${ollamaHealth.model}` : 'AI: Offline'}
               </span>
             </span>
+            <Button
+              variant="ghost"
+              onClick={openCompare}
+              disabled={versions.length < 2}
+              title={versions.length < 2 ? 'Upload and analyze a second resume to enable comparison' : ''}
+            >
+              Compare versions
+            </Button>
             <Button variant="ghost" onClick={() => navigate('/dashboard/student')}>
               ← Dashboard
             </Button>
@@ -497,6 +526,53 @@ const ResumeIntelligence = () => {
           </p>
         </div>
       </div>
+
+      <Modal open={compareOpen} onClose={() => setCompareOpen(false)} widthClass="max-w-4xl">
+        <div className="space-y-4">
+          <div className="grid md:grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs uppercase tracking-wider text-slate-400 mb-1">Before (A)</label>
+              <select
+                value={comparePair.a}
+                onChange={(e) => setComparePair((prev) => ({ ...prev, a: e.target.value }))}
+                className="w-full rounded-portal bg-slate-800 border border-slate-700 px-3 py-2 outline-none focus:ring-2 focus:ring-intel-blue-light"
+              >
+                {versions.map((v) => (
+                  <option key={`a-${v.resumeId}`} value={v.resumeId}>
+                    v{v.version} · {v.filename} · avg {v.avgScore}%
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs uppercase tracking-wider text-slate-400 mb-1">After (B)</label>
+              <select
+                value={comparePair.b}
+                onChange={(e) => setComparePair((prev) => ({ ...prev, b: e.target.value }))}
+                className="w-full rounded-portal bg-slate-800 border border-slate-700 px-3 py-2 outline-none focus:ring-2 focus:ring-intel-blue-light"
+              >
+                {versions.map((v) => (
+                  <option key={`b-${v.resumeId}`} value={v.resumeId}>
+                    v{v.version} · {v.filename} · avg {v.avgScore}%
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          {comparePair.a === comparePair.b ? (
+            <p className="text-sm text-warning">Choose two different versions to compare.</p>
+          ) : (
+            <ResumeCompareView
+              resumeA={comparePair.a}
+              resumeB={comparePair.b}
+              onClose={() => setCompareOpen(false)}
+              compareResumes={compareResumes}
+              versions={versions}
+            />
+          )}
+        </div>
+      </Modal>
     </main>
   );
 };

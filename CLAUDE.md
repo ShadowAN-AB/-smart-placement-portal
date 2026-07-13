@@ -86,6 +86,7 @@ vercel.json     Vercel build/routing config
 | `GET /api/applications/my-applications` | student | paged, populates job |
 | `GET /api/applications/job/:jobId` | recruiter | owner only; filters: `search, status, minMatchScore, skill, sortBy(matchScore\|appliedAt), order` |
 | `PUT /api/applications/:appId/status` | recruiter | status ∈ `pending, shortlisted, rejected, interview`; **notifies student** |
+| `POST /api/applications/bulk-status` | recruiter | `{appIds: [...], status}`; max 100 IDs; rejects with 403 if any app isn't owned by the recruiter (checks **all-or-nothing**); atomic `updateMany`; notifies each affected student |
 | `POST /api/interviews` | recruiter | requires future `scheduledAt`; **duration clamped to [15,180]**; **rejects if student has another `scheduled` interview within ±30 min buffer**; sets application status → `interview`; **fires emails (with `.ics`) + in-app notifications to both parties (fire-and-forget)** |
 | `GET /api/interviews` | any | scoped by role (student sees own, recruiter sees own); `?upcoming=true` forces `status=scheduled` + future |
 | `GET /api/interviews/:id` | student/recruiter of that interview, or admin | |
@@ -102,6 +103,8 @@ vercel.json     Vercel build/routing config
 | `POST /api/ai/resume/analyze` | student | full pipeline: extract text → Ollama → save `ResumeAnalysis` → **upserts extracted `skills`/`education`/`projects`/`certifications` back into `StudentProfile`**; **notifies student when done** |
 | `GET /api/ai/resume/status` | student | latest upload state |
 | `GET /api/ai/resume/history` | student | last 10 uploads |
+| `GET /api/ai/resume/versions` | student | last 5 uploads with `{topScore, avgScore, jobsScored, analyzedAt}` — feeds the compare picker |
+| `GET /api/ai/resume/compare?a=&b=` | student | side-by-side extractedData + diff `{skillsAdded, skillsRemoved, jobScoreDeltas}`; deltas sorted by absolute magnitude |
 | `GET /api/ai/fit/companies` | student | company-level fit (best job per company) |
 | `GET /api/ai/fit/jobs` | student | per-job fit with matched/missing skills |
 | `POST /api/ai/ask` | student | context-only Q&A over their analysis + top 10 job matches; **persists both user question and assistant reply as `ChatMessage`** |

@@ -151,7 +151,9 @@ Extract into `server/utils/notifier.js` — `notify(userId, {type, title, body, 
 
 ---
 
-## Phase 3 — Feature polish
+## Phase 3 — Feature polish ✅ DONE
+
+Shipped: `GET /api/ai/resume/versions` + `GET /api/ai/resume/compare` endpoints; `ResumeCompareView` component + version-picker modal wired into `ResumeIntelligence`; `POST /api/applications/bulk-status` (all-or-nothing ownership check, notify per affected student); checkbox column + select-all-on-page + floating bulk action bar in `RecruiterDashboard` applicants table with optimistic updates.
 
 Independent from Phase 2; do in any order.
 

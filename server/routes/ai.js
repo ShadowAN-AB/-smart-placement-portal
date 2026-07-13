@@ -1,4 +1,5 @@
 const express = require('express');
+const mongoose = require('mongoose');
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
@@ -366,6 +367,128 @@ router.delete('/chat', async (req, res) => {
     res.json({ deleted: result.deletedCount });
   } catch (error) {
     res.status(500).json({ message: error.message || 'Failed to clear chat history' });
+  }
+});
+
+// ── Version list with score summaries for compare picker ──
+router.get('/resume/versions', async (req, res) => {
+  try {
+    const uploads = await ResumeUpload.find({ userId: req.user._id })
+      .sort({ createdAt: -1 })
+      .limit(5)
+      .select('originalFilename version createdAt status')
+      .lean();
+
+    if (uploads.length === 0) {
+      return res.json({ versions: [] });
+    }
+
+    const analyses = await ResumeAnalysis.find({
+      userId: req.user._id,
+      resumeId: { $in: uploads.map((u) => u._id) },
+    })
+      .select('resumeId jobFitScores analyzedAt')
+      .lean();
+
+    const analysisByResume = new Map(analyses.map((a) => [a.resumeId.toString(), a]));
+
+    const versions = uploads.map((u) => {
+      const analysis = analysisByResume.get(u._id.toString());
+      const scores = (analysis?.jobFitScores || []).map((j) => j.score || 0);
+      const topScore = scores.length > 0 ? Math.max(...scores) : 0;
+      const avgScore = scores.length > 0 ? Math.round((scores.reduce((sum, s) => sum + s, 0) / scores.length) * 100) / 100 : 0;
+
+      return {
+        resumeId: u._id,
+        version: u.version,
+        filename: u.originalFilename,
+        uploadedAt: u.createdAt,
+        status: u.status,
+        analyzedAt: analysis?.analyzedAt || null,
+        topScore,
+        avgScore,
+        jobsScored: scores.length,
+      };
+    });
+
+    return res.json({ versions });
+  } catch (error) {
+    return res.status(500).json({ message: error.message || 'Failed to fetch versions' });
+  }
+});
+
+// ── Compare two resume analyses ──
+router.get('/resume/compare', async (req, res) => {
+  try {
+    const { a, b } = req.query;
+    if (!a || !b) {
+      return res.status(400).json({ message: 'Both a and b query params are required' });
+    }
+    if (!mongoose.Types.ObjectId.isValid(a) || !mongoose.Types.ObjectId.isValid(b)) {
+      return res.status(400).json({ message: 'Invalid resume id' });
+    }
+
+    const [analysisA, analysisB] = await Promise.all([
+      ResumeAnalysis.findOne({ userId: req.user._id, resumeId: a }).lean(),
+      ResumeAnalysis.findOne({ userId: req.user._id, resumeId: b }).lean(),
+    ]);
+
+    if (!analysisA || !analysisB) {
+      return res.status(404).json({ message: 'One or both analyses not found for this user' });
+    }
+
+    const skillsA = new Set((analysisA.extractedData?.skills || []).map((s) => String(s).toLowerCase()));
+    const skillsB = new Set((analysisB.extractedData?.skills || []).map((s) => String(s).toLowerCase()));
+    const skillsAdded = [...skillsB].filter((s) => !skillsA.has(s));
+    const skillsRemoved = [...skillsA].filter((s) => !skillsB.has(s));
+
+    const jobsAMap = new Map(
+      (analysisA.jobFitScores || []).map((j) => [j.jobId.toString(), j])
+    );
+    const jobsBMap = new Map(
+      (analysisB.jobFitScores || []).map((j) => [j.jobId.toString(), j])
+    );
+
+    const allJobIds = new Set([...jobsAMap.keys(), ...jobsBMap.keys()]);
+    const jobIdsList = [...allJobIds].map((id) => new mongoose.Types.ObjectId(id));
+    const jobs = await Job.find({ _id: { $in: jobIdsList } }).select('title company').lean();
+    const jobsMeta = new Map(jobs.map((j) => [j._id.toString(), j]));
+
+    const jobScoreDeltas = [...allJobIds]
+      .map((id) => {
+        const before = jobsAMap.get(id)?.score ?? null;
+        const after = jobsBMap.get(id)?.score ?? null;
+        const meta = jobsMeta.get(id) || {};
+        return {
+          jobId: id,
+          title: meta.title || '',
+          company: meta.company || '',
+          before,
+          after,
+          delta: before !== null && after !== null ? Math.round((after - before) * 100) / 100 : null,
+        };
+      })
+      .sort((x, y) => (Math.abs(y.delta ?? -Infinity) - Math.abs(x.delta ?? -Infinity)));
+
+    return res.json({
+      a: {
+        resumeId: a,
+        extractedData: analysisA.extractedData,
+        analyzedAt: analysisA.analyzedAt,
+      },
+      b: {
+        resumeId: b,
+        extractedData: analysisB.extractedData,
+        analyzedAt: analysisB.analyzedAt,
+      },
+      diff: {
+        skillsAdded,
+        skillsRemoved,
+        jobScoreDeltas,
+      },
+    });
+  } catch (error) {
+    return res.status(500).json({ message: error.message || 'Failed to compare' });
   }
 });
 

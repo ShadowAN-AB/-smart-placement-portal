@@ -127,6 +127,29 @@ export const useResumeAI = () => {
     }
   }, []);
 
+  // ── Fetch resume version list for the compare picker ──
+  const fetchVersions = useCallback(async () => {
+    try {
+      const data = await apiRequest('/api/ai/resume/versions');
+      return data.versions || [];
+    } catch (err) {
+      setError(err.message);
+      return [];
+    }
+  }, []);
+
+  // ── Compare two resume analyses ──
+  const compareResumes = useCallback(async (resumeIdA, resumeIdB) => {
+    try {
+      const params = new URLSearchParams({ a: resumeIdA, b: resumeIdB });
+      const data = await apiRequest(`/api/ai/resume/compare?${params.toString()}`);
+      return data;
+    } catch (err) {
+      setError(err.message);
+      throw err;
+    }
+  }, []);
+
   // ── Fetch persisted chat history ──
   const fetchChatHistory = useCallback(async () => {
     try {
@@ -244,6 +267,8 @@ export const useResumeAI = () => {
     startPolling,
     fetchChatHistory,
     clearChat,
+    fetchVersions,
+    compareResumes,
     clearError: () => setError(''),
   };
 };

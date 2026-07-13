@@ -217,4 +217,72 @@ router.put('/:appId/status', authMiddleware, requireRole('recruiter'), async (re
   }
 });
 
+// ── Bulk update status ──
+router.post('/bulk-status', authMiddleware, requireRole('recruiter'), async (req, res) => {
+  try {
+    const { appIds, status } = req.body;
+
+    if (!Array.isArray(appIds) || appIds.length === 0) {
+      return res.status(400).json({ message: 'appIds must be a non-empty array' });
+    }
+
+    if (appIds.length > 100) {
+      return res.status(400).json({ message: 'At most 100 applications per bulk request' });
+    }
+
+    const normalizedStatus = String(status || '').trim().toLowerCase();
+    if (!['pending', 'shortlisted', 'rejected', 'interview'].includes(normalizedStatus)) {
+      return res.status(400).json({ message: 'Invalid status value' });
+    }
+
+    const validIds = appIds.filter((id) => mongoose.Types.ObjectId.isValid(id));
+    if (validIds.length === 0) {
+      return res.status(400).json({ message: 'No valid appIds provided' });
+    }
+
+    // Verify ALL requested applications belong to jobs owned by this recruiter
+    const applications = await Application.find({ _id: { $in: validIds } })
+      .populate('jobId', 'title company postedBy')
+      .lean();
+
+    const ownedApplications = applications.filter(
+      (app) => app.jobId && app.jobId.postedBy.toString() === req.user._id.toString()
+    );
+
+    if (ownedApplications.length !== validIds.length) {
+      return res.status(403).json({
+        message: 'Some applications belong to jobs you do not own',
+        owned: ownedApplications.length,
+        requested: validIds.length,
+      });
+    }
+
+    const ownedIds = ownedApplications.map((app) => app._id);
+    const result = await Application.updateMany(
+      { _id: { $in: ownedIds } },
+      { $set: { status: normalizedStatus } }
+    );
+
+    // Fire-and-forget: notify each affected student
+    Promise.all(
+      ownedApplications.map((app) =>
+        notify(app.studentId, {
+          type: 'application_status',
+          title: `Application ${normalizedStatus}`,
+          body: `${app.jobId?.title || 'A job'} at ${app.jobId?.company || 'a company'} — status changed to ${normalizedStatus}`,
+          link: `/jobs/${app.jobId?._id}`,
+          meta: { applicationId: app._id, newStatus: normalizedStatus },
+        }).catch(() => {})
+      )
+    ).catch(() => {});
+
+    return res.json({
+      updated: result.modifiedCount,
+      skipped: validIds.length - result.modifiedCount,
+    });
+  } catch (error) {
+    return res.status(500).json({ message: 'Failed to bulk update status' });
+  }
+});
+
 module.exports = router;
