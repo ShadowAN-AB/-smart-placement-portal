@@ -2,22 +2,16 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## Repo state warning (read first)
-
-Local `main` and `origin/main` have **completely divergent histories** (no common ancestor). The real project lives on `origin/main`; local `main` is a near-empty scaffold with only `README.md`, `LICENSE`, and `.gitignore`. If `ls` shows almost nothing, you are on a branch descended from the empty local `main` — inspect `origin/main` instead (e.g. `git show origin/main:<path>`) or reset local `main` to `origin/main` before working.
-
-All paths and commands below refer to the tree on `origin/main`.
-
 ## Stack
 
-- **Client**: React 19 + Vite 8, Tailwind 3, React Router 7, Recharts. Auth token stored in `localStorage` under key `spp_token`; user under `spp_user`.
-- **Server**: Node.js + Express 5, Mongoose 9 (MongoDB), JWT (`jsonwebtoken`) + bcryptjs, Multer for uploads, `pdf-parse` + `mammoth` for resume text extraction.
-- **AI**: Local Ollama HTTP API (`OLLAMA_URL`, default `http://localhost:11434`; `OLLAMA_MODEL`, default `llama3`) for resume parsing and the in-app assistant. `aiExtractor.js` falls back to regex parsing if the LLM output is malformed — don't remove the fallback.
-- **Deploy**: Vercel. Static client from `client/dist`; Express app re-exported as a serverless function via `api/index.js` (imports from `../server/**`). Local dev uses `server/server.js` (which calls `app.listen`); Vercel uses `api/index.js` (no listen, `module.exports = app`). Keep both in sync when adding routes.
+- **Client**: React 19 + Vite 8, Tailwind 3, React Router 7, Recharts. Token in `localStorage['spp_token']`, user in `localStorage['spp_user']`.
+- **Server**: Node.js + Express 5 (CommonJS), Mongoose 9 (MongoDB), JWT + bcryptjs, Multer for uploads, `pdf-parse` + `mammoth` for resume text.
+- **AI**: Local Ollama HTTP API. `OLLAMA_URL` (default `http://localhost:11434`), `OLLAMA_MODEL` (default `qwen2.5-coder` in code; `llama3` in `.env.example` — mismatch, prefer what's set in `.env`). Falls back to regex if the LLM returns malformed JSON — keep the fallback.
+- **Deploy**: Vercel. Static client from `client/dist`; the Express app is re-exported as a serverless function via `api/index.js`. Local dev uses `server/server.js` (calls `app.listen`); Vercel uses `api/index.js` (no listen, `module.exports = app`). **When adding a route, both files must import and mount it.**
 
 ## Commands
 
-Run from repo root unless noted.
+Run from repo root.
 
 ```bash
 # One-time
@@ -27,80 +21,169 @@ npm install --prefix client
 cp server/.env.example server/.env
 cp client/.env.example client/.env
 
-# Dev (client on Vite port, proxies /api → localhost:5050; server on 5050)
+# Dev — server on 5050, client on 5173 (falls back to 5174 if busy)
 npm run dev              # both via concurrently
 npm run dev:server       # server only (nodemon)
 npm run dev:client       # client only
 
-# Build (client only; server is not bundled)
+# Build (client only)
 npm run build
 
-# Seed sample data
+# Seed sample data (destructive — deletes User/StudentProfile/Job/Application/MatchScore first)
 npm run seed --prefix server
+# Creates: student1@spp.dev, student2@spp.dev, recruiter@spp.dev, admin@spp.dev
+# Password for all: Password@123
 
-# Lint (client)
+# Lint (client only, no server lint)
 npm run lint --prefix client
 
-# Health check
+# Health checks
 curl http://localhost:5050/api/health
+curl http://localhost:5050/api/ai/health   # requires auth, but useful shape reference
 ```
 
-No test suite is configured.
+No test suite exists.
 
-## Architecture
+## Directory layout
 
-### Directory layout
 ```
-/               root package.json + concurrently for dev
+/               root package.json + concurrently
 /client         Vite React SPA
 /server         Express API + Mongoose models
-/api/index.js   Vercel serverless wrapper (imports from ../server)
+/api/index.js   Vercel serverless wrapper (imports from ../server/**)
 vercel.json     Vercel build/routing config
 ```
 
-### Backend request path
+## Backend
 
-`server/server.js` (or `api/index.js` on Vercel) wires the same seven route modules under `/api/*`:
+### Auth model
 
-| Mount | File | Purpose |
+- JWT (`jsonwebtoken`) with 7-day expiry, signed with `JWT_SECRET` (falls back to `'dev_jwt_secret_change_me'` — **never rely on that in prod**).
+- Roles on `User`: `student`, `recruiter`, `admin`. Admin signup requires the `ADMIN_SIGNUP_CODE` env value (default `placement_admin_2026`).
+- `middleware/auth.js` exports `authMiddleware` and `requireRole(role)`.
+- **Token can also come from `?token=<jwt>` query string** — this exists so browsers can download `.ics` files by clicking a link (`/api/interviews/:id/calendar`). Don't remove it without also fixing the calendar flow.
+- Emails are lowercased at both signup and lookup — preserve that when adding user queries.
+- Every successful login writes a `LoginEvent` (userId, email, IP, UA, timestamp) for audit.
+
+### Routes (mounted in `server/server.js` **and** `api/index.js`)
+
+| Method + path | Auth | What it does |
 |---|---|---|
-| `/api/auth` | `routes/auth.js` | signup, login, `me`; logs `LoginEvent`; admin signup requires `ADMIN_SIGNUP_CODE` |
-| `/api/students` | `routes/students.js` | student profile CRUD |
-| `/api/jobs` | `routes/jobs.js` | job postings |
-| `/api/applications` | `routes/applications.js` | student → job applications |
-| `/api/interviews` | `routes/interviews.js` | scheduling + `.ics` export (`utils/icsGenerator.js`) |
-| `/api/admin` | `routes/admin.js` | admin analytics |
-| `/api/ai` | `routes/ai.js` | resume upload + LLM extraction + match/company scoring + assistant chat |
+| `POST /api/auth/signup` | public | body: `{name,email,password,role,adminCode?}` |
+| `POST /api/auth/login` | public | body: `{email,password}` → `{token,user}` |
+| `GET /api/auth/me` | any | returns `req.user` |
+| `GET /api/students/profile` | student | returns default shape if no doc exists |
+| `PUT /api/students/profile` | student | upserts; validates bio ≤500 chars, numeric fields ≥0 |
+| `POST /api/students/profile/resume` | student | `{resumeUrl}` — must be `http(s)://…` |
+| `GET /api/jobs` | any | filters: `company, skills, minSalary, maxSalary, page, pageSize`. **Students see only `active`+`approved` jobs, sorted by match score (skills 70/exp 20/salary 10)**. Recruiters see only their own. |
+| `GET /api/jobs/:jobId` | any | students only see approved+active; recruiters only their own |
+| `POST /api/jobs` | recruiter | creates with `approved: false` — admin must approve before students see it |
+| `PUT /api/jobs/:jobId` | recruiter | owner only |
+| `DELETE /api/jobs/:jobId` | recruiter | soft-close (`status='closed'`), not delete |
+| `POST /api/applications` | student | duplicate protected by `{studentId,jobId}` unique index; also upserts a `MatchScore` doc |
+| `GET /api/applications/my-applications` | student | paged, populates job |
+| `GET /api/applications/job/:jobId` | recruiter | owner only; filters: `search, status, minMatchScore, skill, sortBy(matchScore\|appliedAt), order` |
+| `PUT /api/applications/:appId/status` | recruiter | status ∈ `pending, shortlisted, rejected, interview` |
+| `POST /api/interviews` | recruiter | requires future `scheduledAt`; **duration clamped to [15,180]**; **rejects if student has another `scheduled` interview within ±30 min buffer**; sets application status → `interview` |
+| `GET /api/interviews` | any | scoped by role (student sees own, recruiter sees own); `?upcoming=true` forces `status=scheduled` + future |
+| `GET /api/interviews/:id` | student/recruiter of that interview, or admin | |
+| `PUT /api/interviews/:id/reschedule` | recruiter owner | can't reschedule `completed`/`cancelled` |
+| `PUT /api/interviews/:id/cancel` | recruiter owner | reverts application status → `shortlisted` |
+| `PUT /api/interviews/:id/complete` | recruiter owner | records `feedback`, `rating` (1–5 clamped) |
+| `GET /api/interviews/:id/calendar` | authorized viewer | returns `.ics`; supports `?token=` for direct browser download |
+| `GET /api/interviews/slots/:recruiterId` | any | `?date=YYYY-MM-DD`, returns 30-min slots 9 AM–6 PM UTC with `available` flag |
+| `GET /api/admin/analytics` | admin | totals, placement rate (`shortlisted`+`interview`/total apps), avg package, top 5 companies, 12-month trend, recent placements |
+| `GET /api/admin/approvals` | admin | jobs with `approved: false`, paged |
+| `POST /api/admin/approve-job/:jobId` | admin | flips `approved: true` |
+| `GET /api/ai/health` | student | Ollama reachability + model-loaded check |
+| `POST /api/ai/resume/upload` | student | multipart `resume` field, PDF/DOCX only, ≤10 MB. Auto-versioned per user via `pre('save')` hook. |
+| `POST /api/ai/resume/analyze` | student | full pipeline: extract text → Ollama → save `ResumeAnalysis` → **upserts extracted `skills`/`education`/`projects`/`certifications` back into `StudentProfile`** |
+| `GET /api/ai/resume/status` | student | latest upload state |
+| `GET /api/ai/resume/history` | student | last 10 uploads |
+| `GET /api/ai/fit/companies` | student | company-level fit (best job per company) |
+| `GET /api/ai/fit/jobs` | student | per-job fit with matched/missing skills |
+| `POST /api/ai/ask` | student | context-only Q&A over their analysis + top 10 job matches |
 
-Auth is a Bearer JWT — `middleware/auth.js` exposes `authMiddleware` and `requireRole(role)`. JWT secret comes from `JWT_SECRET` (falls back to a hardcoded dev string — never rely on that in prod).
+### Data model (`server/models/`)
 
-Roles: `student`, `recruiter`, `admin`. Role is stored on `User` and drives both API guards and client route guards.
+- `User` — `{name, email(unique,lowercase), passwordHash, role}`.
+- `StudentProfile` — 1:1 with `User` (unique `userId`); mixes user-provided fields (`skills, bio, expectedSalary, prefJobTitles, yearsOfExperience`) with AI-extracted ones (`education, projects, certifications, lastAnalyzedAt`).
+- `Job` — `{title, company, description, requiredSkills, minExperience, minSalary, maxSalary, status(active|closed), approved, postedBy}`. **`requiredSkills` are stored lowercase**; `approved` gates student visibility.
+- `Application` — `{studentId, jobId, status, matchScore, appliedAt}`. Unique compound index `{studentId, jobId}`.
+- `Interview` — extensive fields; unique index on `applicationId`; secondary indexes on `{studentId, scheduledAt}` and `{recruiterId, scheduledAt}`.
+- `ResumeUpload` — file metadata + `status ∈ uploaded|parsing|extracted|analyzed|failed`. `pre('save')` auto-increments `version` per user.
+- `ResumeAnalysis` — extracted resume data + `companyFitScores[]` + `jobFitScores[]` with 5-factor breakdown.
+- `MatchScore` — cached per `{studentId, jobId}` (unique) for reuse.
+- `LoginEvent` — audit trail.
+- `AdminAnalytics` — a rollup schema keyed by `month`. **Currently defined but not written to** by any route (analytics are computed live). Don't rely on reading it until a writer is added.
 
-### AI / resume pipeline (`routes/ai.js` + `utils/`)
+### Match algorithm (`server/utils/matchAlgorithm.js`)
 
-1. Multer accepts PDF or DOCX; uploads go to `server/uploads/` locally, `/tmp` on Vercel (`process.env.VERCEL`).
-2. `utils/resumeParser.js` extracts raw text.
-3. `utils/aiExtractor.js` posts to Ollama with a strict JSON-only system prompt; on parse failure, regex fallback runs. Result is persisted as `ResumeAnalysis`.
-4. `utils/matchAlgorithm.js` computes weighted skill/experience/salary match; `utils/companyScorer.js` ranks jobs/companies for a student.
-5. `utils/aiAssistant.js` powers the `AskAssistant` chat component.
+Two functions, both return `{score, matchedSkills, missingSkills, explanation}`:
 
-If you change the extractor's output shape, update `models/ResumeAnalysis.js` and the `useResumeAI` hook together.
+- `calculateMatchScore` — used for the **jobs listing** and **application submission**. Weights: **skills 70 / experience 20 / salary 10**. Salary uses neutral 50 when data is missing.
+- `calculateEnhancedMatchScore` — used **only by the AI resume analyzer** (`companyScorer.js`). Also returns `factors: {skills, experience, salary, education, projects}`. Weights: **skills 55 / experience 20 / salary 10 / education 10 / projects 5**. Merges `extractedData.skills` with profile skills; converts `yearsOfExperience` to months and takes max with `totalExperienceMonths`; degree scoring keyed off substrings in `edu.degree` after lowercasing.
 
-### Client structure
+If you change the enhanced factor weights or shape, `models/ResumeAnalysis.js`'s `factorsSchema` and the `AskAssistant` scoring rubric prompt in `utils/aiAssistant.js` must be updated together — the LLM cites the weights in its answers.
 
-- `src/App.jsx` — all routes; role-based redirects from `/`.
-- `src/context/AuthContext.jsx` — token/user persistence in `localStorage`; hydrates on mount.
-- `src/components/ProtectedRoute.jsx` — accepts a `role` prop for role-gated pages.
-- `src/utils/api.js` — thin `fetch` wrapper. Reads `VITE_API_BASE_URL` (empty in dev, so the Vite proxy handles `/api`; set explicitly for prod). Automatically attaches the Bearer token.
-- Data-fetching hooks in `src/hooks/` (`useJobs`, `useApplications`, `useInterviews`, `useProfile`, `useAnalytics`, `useResumeAI`) — pages should go through these rather than calling `apiRequest` directly.
+### AI / resume pipeline
+
+1. `POST /api/ai/resume/upload` — Multer saves to `server/uploads/` locally, `/tmp` on Vercel (checked via `process.env.VERCEL`). Filename: `<userId>-<timestamp>-<rand>.<ext>`. 10 MB limit; PDF + DOCX only.
+2. `POST /api/ai/resume/analyze`:
+   - `utils/resumeParser.js` → text via `pdf-parse` (`new PDFParse(Uint8Array).getText()` — note the class API, not the older function) or `mammoth`, then normalized whitespace.
+   - `utils/aiExtractor.js` → Ollama `/api/generate` with strict JSON-only system prompt, `temperature: 0.1`, `num_predict: 2048`, `stream: false`. On non-2xx or parse failure, `regexFallback()` runs (skills, education, cert, coarse experience).
+   - `utils/companyScorer.js` → `computeCompanyScores` (best job per company) and `computeJobScores` (all jobs), both using `calculateEnhancedMatchScore`.
+   - Persists `ResumeAnalysis` (upsert on `{userId, resumeId}`), **and merges extracted data back into `StudentProfile`** via `$set` on education/projects/certifications and `$addToSet` on skills.
+3. `POST /api/ai/ask` — `utils/aiAssistant.js` builds a context block (resume data + top 10 jobs by score + scoring rubric), forces context-only answers with `temperature: 0.3`, and heuristically flags low confidence when the reply contains "don't have enough information" etc.
 
 ### Vercel routing quirk
 
-`vercel.json` rewrites `/api/(.*) → /api` and `/(.*) → /index.html`. The Express app inside `api/index.js` sees the full `/api/...` path, so mount paths in the Express app must include `/api` (they do). Don't strip the prefix.
+`vercel.json` rewrites `/api/(.*) → /api` and `/(.*) → /index.html`. The Express app inside `api/index.js` sees the full `/api/...` path, so mount paths must include `/api` (they do). **Don't strip the prefix.** Uploads on Vercel go to ephemeral `/tmp` — files won't survive across invocations, so multi-request flows (upload then later analyze) will break unless a durable store is added.
 
-## Conventions
+## Client
 
-- Server uses CommonJS (`"type": "commonjs"`); client is ESM (`"type": "module"`). Don't mix.
-- Emails are lowercased before storage/lookup in `routes/auth.js` — preserve that when adding user queries.
-- `server/uploads/` contains committed sample PDFs. Don't add more real uploads to git; the runtime writes there but it's for local dev only (Vercel uses `/tmp`).
-- Env files have been leaked in history and scrubbed (commits `cad613b`, `60ac244`, `de1b196`). Never commit `.env`; treat any secrets found in old history as compromised.
+### Routing (`src/App.jsx`)
+
+`/` redirects by role. `/auth` is the login/signup page. Every other route wraps in `<ProtectedRoute>`; passing a `role` prop enforces role match and redirects to the correct dashboard otherwise. Fallback route → `/`.
+
+Routes: `/dashboard/student`, `/dashboard/recruiter`, `/dashboard/admin`, `/jobs/:jobId`, `/resume-intelligence` (student only), `/interviews`.
+
+### AuthContext (`src/context/AuthContext.jsx`)
+
+Persists `token` and `user` to `localStorage` (`spp_token`, `spp_user`). Exposes `{token, user, isAuthenticated, setSession, logout}`. `isAuthenticated = Boolean(token && user)`. There's no auto-refresh or expiry check — a stale token will only surface when a request returns 401.
+
+### API client (`src/utils/api.js`)
+
+Single `apiRequest(path, options)` helper. Reads `VITE_API_BASE_URL` (empty in dev so the Vite proxy handles `/api` → `localhost:5050`; set explicitly for prod builds). Attaches `Authorization: Bearer <token>` automatically. Multipart uploads (`FormData`) bypass this helper and use `fetch` directly (see `useResumeAI.uploadResume`).
+
+### Data hooks (`src/hooks/`)
+
+Pages should call these, not `apiRequest` directly.
+
+- `useJobs(filters)` — auto-refetches when `JSON.stringify(filters)` changes (note: object identity is intentionally ignored via stringify).
+- `useApplications(filters)` — student's own applications.
+- `useInterviews({upcoming, status})` — plus mutators `schedule/reschedule/cancel/completeInterview` that refetch on success.
+- `useProfile()` — student profile with `saveProfile(payload)`.
+- `useResumeAI()` — full lifecycle: upload, analyze, poll status (2 s interval, auto-stops on terminal state), fetch scores, ask questions, maintains local `chatHistory`. On mount it kicks off `fetchStatus`, `checkHealth`, `fetchCompanyScores`, `fetchJobScores` in parallel.
+- `useAnalytics()` — **stub, returns a "planned for next step" error**. `AdminDashboard` bypasses it and calls `apiRequest('/api/admin/analytics')` directly. Either wire the hook up or delete it.
+
+### Styling / design tokens
+
+Tailwind config (`client/tailwind.config.js`) defines:
+- Colors: `intel-blue` (#1A73E8), `intel-blue-dark`, `intel-blue-light`, `success`, `warning`, `error`.
+- Fonts: `heading` (Manrope), `sans` (Inter).
+- `rounded-portal` (12px), `shadow-panel`.
+
+Use these tokens instead of hardcoding hex values. Formatters in `src/utils/formatters.js` render INR currency, LPA (Lakhs Per Annum = value/100000), match labels (`Poor/Good/Excellent`), and interview date/time/countdown.
+
+## Conventions & gotchas
+
+- **CJS vs ESM split** — server is `"type": "commonjs"`, client is `"type": "module"`. Don't cross the streams.
+- **Skills are lowercased at the boundary** — jobs and student skills are stored/compared lowercase. Preserve this in any new skill-related code.
+- **`server/uploads/` has real sample PDFs committed** (7 files). Don't add more; on Vercel this path isn't used (goes to `/tmp`).
+- **Env leak history** — commits `cad613b`, `60ac244`, `de1b196` are the scrub trail for a leaked `server/.env`. Treat anything found in old history as compromised and rotate.
+- **Ollama model name mismatch** — `.env.example` says `llama3`, code default is `qwen2.5-coder`. Whatever's in your `.env` wins.
+- **`useAnalytics` is a stub** and `AdminAnalytics` model has no writer — both are incomplete scaffolds waiting to be filled in or removed.
+- **PDF parser API** — `resumeParser.js` uses `new PDFParse(new Uint8Array(buf)).getText()`, which is the class-based API from `pdf-parse` v2. Older `pdf-parse(buf)` functional API won't work.
+- **Duplicate interview prevention** relies on: unique index on `applicationId` + a manual ±30-min window check on the student. Don't remove either; they cover different cases.
+- **No test suite, no server lint** — the only automated quality gate is `npm run lint --prefix client`.
