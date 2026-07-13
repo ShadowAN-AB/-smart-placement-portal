@@ -2,10 +2,12 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+Phase status and future work: [docs/ROADMAP.md](docs/ROADMAP.md).
+
 ## Stack
 
 - **Client**: React 19 + Vite 8, Tailwind 3, React Router 7, Recharts. Token in `localStorage['spp_token']`, user in `localStorage['spp_user']`.
-- **Server**: Node.js + Express 5 (CommonJS), Mongoose 9 (MongoDB), JWT + bcryptjs, Multer for uploads, `pdf-parse` + `mammoth` for resume text.
+- **Server**: Node.js + Express 5 (CommonJS), Mongoose 9 (MongoDB), JWT + bcryptjs, `express-rate-limit`, Multer for uploads, `pdf-parse` + `mammoth` for resume text, `nodemailer` for outgoing email, `@anthropic-ai/sdk` when `LLM_PROVIDER=anthropic`.
 - **AI**: Pluggable LLM provider in `server/utils/llm/`. `LLM_PROVIDER` env selects `ollama` (default, local, no cost) or `anthropic` (cloud, needs `ANTHROPIC_API_KEY` — default model `claude-haiku-4-5-20251001`). All AI code calls `getProvider().generateJSON(...)` / `.generateText(...)` / `.health()`. Adding a new provider = new file in `server/utils/llm/` exporting the same 3-method interface + name, then register in `index.js`. Regex fallback in `aiExtractor.js` stays as the safety net.
 - **Deploy**: Vercel. Static client from `client/dist`; the Express app is re-exported as a serverless function via `api/index.js`. Local dev uses `server/server.js` (calls `app.listen`); Vercel uses `api/index.js` (no listen, `module.exports = app`). **When adding a route, both files must import and mount it.**
 
@@ -21,7 +23,7 @@ npm install --prefix client
 cp server/.env.example server/.env
 cp client/.env.example client/.env
 
-# Dev — server on 5050, client on 5173 (falls back to 5174 if busy)
+# Dev — server on 5050, client on 5173 (Vite picks the next free port if 5173 is busy)
 npm run dev              # both via concurrently
 npm run dev:server       # server only (nodemon)
 npm run dev:client       # client only
@@ -39,14 +41,16 @@ npm run lint --prefix client
 
 # Health checks
 curl http://localhost:5050/api/health
-curl http://localhost:5050/api/ai/health   # requires auth, but useful shape reference
+# /api/ai/health requires a student Bearer token — probably shouldn't. Fix if you touch that route.
 ```
 
 Server tests (Vitest + Supertest + mongodb-memory-server):
 
 ```bash
-npm test --prefix server            # one-shot
-npm run test:watch --prefix server  # watch mode
+npm test --prefix server                              # one-shot, all tests
+npm run test:watch --prefix server                    # watch mode
+npm test --prefix server -- tests/auth.test.js        # one file
+npm test --prefix server -- -t "duplicate email"       # by test name substring
 ```
 
 Tests live in `server/tests/`. `setup.js` spins up an in-memory MongoDB and wipes collections between tests. **Env vars are set at the top of `setup.js`, not in `beforeAll`** — auth modules read `process.env.JWT_SECRET` at import time. CI runs both `server-tests` and `client-lint + build` via `.github/workflows/ci.yml`.
@@ -107,7 +111,7 @@ vercel.json     Vercel build/routing config
 | `GET /api/admin/analytics` | admin | totals, placement rate (`shortlisted`+`interview`/total apps), avg package, top 5 companies, 12-month trend, recent placements |
 | `GET /api/admin/approvals` | admin | jobs with `approved: false`, paged |
 | `POST /api/admin/approve-job/:jobId` | admin | flips `approved: true`; **notifies posting recruiter** |
-| `GET /api/ai/health` | student | Ollama reachability + model-loaded check |
+| `GET /api/ai/health` | student | current LLM provider health — Ollama tags endpoint or Anthropic key presence |
 | `POST /api/ai/resume/upload` | student | multipart `resume` field, PDF/DOCX only, ≤10 MB. Auto-versioned per user via `pre('save')` hook. |
 | `POST /api/ai/resume/analyze` | student | full pipeline: extract text → Ollama → save `ResumeAnalysis` → **upserts extracted `skills`/`education`/`projects`/`certifications` back into `StudentProfile`**; **notifies student when done** |
 | `GET /api/ai/resume/status` | student | latest upload state |
@@ -152,10 +156,10 @@ If you change the enhanced factor weights or shape, `models/ResumeAnalysis.js`'s
 1. `POST /api/ai/resume/upload` — Multer saves to `server/uploads/` locally, `/tmp` on Vercel (checked via `process.env.VERCEL`). Filename: `<userId>-<timestamp>-<rand>.<ext>`. 10 MB limit; PDF + DOCX only.
 2. `POST /api/ai/resume/analyze`:
    - `utils/resumeParser.js` → text via `pdf-parse` (`new PDFParse(Uint8Array).getText()` — note the class API, not the older function) or `mammoth`, then normalized whitespace.
-   - `utils/aiExtractor.js` → Ollama `/api/generate` with strict JSON-only system prompt, `temperature: 0.1`, `num_predict: 2048`, `stream: false`. On non-2xx or parse failure, `regexFallback()` runs (skills, education, cert, coarse experience).
+   - `utils/aiExtractor.js` → `getProvider().generateJSON(...)` from `utils/llm/` with strict JSON-only system prompt, `temperature: 0.1`, `maxTokens: 2048`. Provider handles the transport (Ollama HTTP or Anthropic SDK). On any error or malformed JSON, `regexFallback()` runs (skills, education, cert, coarse experience).
    - `utils/companyScorer.js` → `computeCompanyScores` (best job per company) and `computeJobScores` (all jobs), both using `calculateEnhancedMatchScore`.
    - Persists `ResumeAnalysis` (upsert on `{userId, resumeId}`), **and merges extracted data back into `StudentProfile`** via `$set` on education/projects/certifications and `$addToSet` on skills.
-3. `POST /api/ai/ask` — `utils/aiAssistant.js` builds a context block (resume data + top 10 jobs by score + scoring rubric), forces context-only answers with `temperature: 0.3`, and heuristically flags low confidence when the reply contains "don't have enough information" etc.
+3. `POST /api/ai/ask` — `utils/aiAssistant.js` builds a context block (resume data + top 10 jobs by score + scoring rubric), sends it via `getProvider().generateText(...)` with `temperature: 0.3` for context-only answers, and heuristically flags low confidence when the reply contains "don't have enough information" etc.
 
 ### Communications (email + in-app notifications)
 
@@ -210,7 +214,7 @@ Use these tokens instead of hardcoding hex values. Formatters in `src/utils/form
 - **Skills are lowercased at the boundary** — jobs and student skills are stored/compared lowercase. Preserve this in any new skill-related code.
 - **`server/uploads/` has real sample PDFs committed** (7 files). Don't add more; on Vercel this path isn't used (goes to `/tmp`).
 - **Env leak history** — commits `cad613b`, `60ac244`, `de1b196` are the scrub trail for a leaked `server/.env`. Treat anything found in old history as compromised and rotate.
-- **Ollama model name mismatch** — `.env.example` says `llama3`, code default is `qwen2.5-coder`. Whatever's in your `.env` wins.
+- **Ollama defaults** — `.env.example` says `llama3` but `ollamaProvider.js` defaults to `qwen2.5-coder`. Only matters when `LLM_PROVIDER=ollama`; irrelevant on Anthropic. Whatever's in your `.env` wins over both.
 - **PDF parser API** — `resumeParser.js` uses `new PDFParse(new Uint8Array(buf)).getText()`, which is the class-based API from `pdf-parse` v2. Older `pdf-parse(buf)` functional API won't work.
 - **Duplicate interview prevention** relies on: unique index on `applicationId` + a manual ±30-min window check on the student. Don't remove either; they cover different cases.
 - **Server tests** — `npm test --prefix server` (Vitest 2 with globals enabled — do NOT upgrade to Vitest 4 without switching test files to ESM). Client has no tests yet.
