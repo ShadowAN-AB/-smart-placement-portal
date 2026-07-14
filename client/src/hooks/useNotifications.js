@@ -13,7 +13,15 @@ export const useNotifications = () => {
   const [error, setError] = useState('');
   const pollRef = useRef(null);
   const visibleRef = useRef(true);
+  const itemsRef = useRef([]);
   const { connected, on } = useSocket();
+
+  // Mirror items into a ref so socket handlers can synchronously dedupe
+  // against the current list. setItems batches — the updater doesn't run
+  // during the handler, so we can't rely on it to check "already there".
+  useEffect(() => {
+    itemsRef.current = items;
+  }, [items]);
 
   const fetchNotifications = useCallback(async () => {
     try {
@@ -73,10 +81,10 @@ export const useNotifications = () => {
   useEffect(() => {
     const off = on('notification', (doc) => {
       if (!doc?._id) return;
-      setItems((prev) => {
-        if (prev.some((n) => n._id === doc._id)) return prev;
-        return [doc, ...prev].slice(0, 10);
-      });
+      // Sync dedupe against the ref — setItems runs async, so its updater
+      // can't tell us "was already there" in time to guard the counter.
+      if (itemsRef.current.some((n) => n._id === doc._id)) return;
+      setItems((prev) => [doc, ...prev].slice(0, 10));
       if (!doc.read) setUnreadCount((prev) => prev + 1);
     });
     return off;

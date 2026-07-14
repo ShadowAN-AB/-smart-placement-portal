@@ -55,7 +55,17 @@ npm test --prefix server -- -t "duplicate email"       # by test name substring
 
 Tests live in `server/tests/`. `setup.js` spins up an in-memory MongoDB and wipes collections between tests. **Env vars are set at the top of `setup.js`, not in `beforeAll`** — auth modules read `process.env.JWT_SECRET` at import time. CI runs both `server-tests` and `client-lint + build` via `.github/workflows/ci.yml`.
 
-No client test suite yet — deferred.
+Client tests (Vitest 4 + Testing Library + MSW 2):
+
+```bash
+npm test --prefix client                                      # one-shot
+npm run test:watch --prefix client                            # watch mode
+npm run test:ui --prefix client                               # browser UI
+npm test --prefix client -- tests/utils/api.test.js           # one file
+npm test --prefix client -- -t "Bearer token"                 # by test name
+```
+
+Tests live in `client/tests/`, mirroring `src/`. MSW handlers in `tests/msw/handlers.js` intercept `fetch` — override per-test with `server.use(...)`. `useSocket` is `vi.mock()`ed in `useNotifications.test.jsx` because the real hook opens a network socket that never resolves in jsdom.
 
 ## Directory layout
 
