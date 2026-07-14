@@ -1,13 +1,16 @@
+// dotenv.config() must run BEFORE any require() that reads process.env at
+// module load time (middleware/auth.js and routes/auth.js both do). Otherwise
+// they capture the fallback JWT secret and won't verify tokens signed with
+// the real one — and the mismatch is silent because REST is self-consistent.
+require('dotenv').config();
+
 const http = require('http');
-const dotenv = require('dotenv');
 const jwt = require('jsonwebtoken');
 const { Server } = require('socket.io');
 
 const connectDB = require('./config/db');
 const { buildApp } = require('./app');
 const { setIO, roomForUser } = require('./utils/socketBus');
-
-dotenv.config();
 
 const PORT = process.env.PORT || 5050;
 const jwtSecret = process.env.JWT_SECRET || 'dev_jwt_secret_change_me';
