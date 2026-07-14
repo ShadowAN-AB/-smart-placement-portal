@@ -7,7 +7,7 @@ Phase status and future work: [docs/ROADMAP.md](docs/ROADMAP.md).
 ## Stack
 
 - **Client**: React 19 + Vite 8, Tailwind 3, React Router 7, Recharts. Token in `localStorage['spp_token']`, user in `localStorage['spp_user']`.
-- **Server**: Node.js + Express 5 (CommonJS), Mongoose 9 (MongoDB), JWT + bcryptjs, `express-rate-limit`, Multer for uploads, `pdf-parse` + `mammoth` for resume text, `nodemailer` for outgoing email, `@anthropic-ai/sdk` when `LLM_PROVIDER=anthropic`.
+- **Server**: Node.js + Express 5 (CommonJS), Mongoose 9 (MongoDB), JWT + bcryptjs, `express-rate-limit`, Multer for uploads, `pdf-parse` + `mammoth` for resume text, `nodemailer` for outgoing email, Socket.IO 4 for real-time notifications, `@anthropic-ai/sdk` when `LLM_PROVIDER=anthropic`.
 - **AI**: Pluggable LLM provider in `server/utils/llm/`. `LLM_PROVIDER` env selects `ollama` (default, local, no cost) or `anthropic` (cloud, needs `ANTHROPIC_API_KEY` — default model `claude-haiku-4-5-20251001`). All AI code calls `getProvider().generateJSON(...)` / `.generateText(...)` / `.health()`. Adding a new provider = new file in `server/utils/llm/` exporting the same 3-method interface + name, then register in `index.js`. Regex fallback in `aiExtractor.js` stays as the safety net.
 - **Deploy**: Vercel. Static client from `client/dist`; the Express app is re-exported as a serverless function via `api/index.js`. Local dev uses `server/server.js` (calls `app.listen`); Vercel uses `api/index.js` (no listen, `module.exports = app`). **When adding a route, both files must import and mount it.**
 
@@ -164,9 +164,17 @@ If you change the enhanced factor weights or shape, `models/ResumeAnalysis.js`'s
 ### Communications (email + in-app notifications)
 
 - **Email** goes through `utils/mailer.js` (nodemailer). If `SMTP_HOST` is unset, emails are silently logged to stdout via `jsonTransport` — dev works without any SMTP setup. Templates live in `utils/emailTemplates.js` and are HTML-escaped. Callers **must fire-and-forget** with `.catch()` — email failures never block API responses.
-- **In-app notifications** go through `utils/notifier.js` → `Notification` model. Same fire-and-forget rule. The client polls `/api/notifications` every 30s while the tab is visible (see `useNotifications`); replace with websockets in Phase 5.
+- **In-app notifications** go through `utils/notifier.js` → `Notification` model. `notifier.notify()` also calls `emitToUser(userId, 'notification', doc)` from `utils/socketBus.js`, which pushes the notification live to any connected socket in the `user:<userId>` room. The client shows it instantly; the 60s poll is a fallback.
 - Interview lifecycle emits **both** email and notification; other events (application status, resume analysis, job approval) emit only notifications.
 - Password reset uses `PasswordResetToken` (SHA-256 hash of the raw token stored; raw token only in the email link). Rate-limited to 5/hr per IP via `express-rate-limit`. Always returns 200 to avoid leaking whether an email exists.
+
+### Real-time (Socket.IO)
+
+- Attached in `server/server.js` **only** — not in `api/index.js`. Serverless functions can't hold long-lived connections, so on Vercel `socketBus.getIO()` returns `null` and `emitToUser` is a no-op; the client falls back to polling.
+- JWT auth at handshake time (`socket.handshake.auth.token`). Invalid/missing token → connection rejected. Each authenticated socket joins the room `user:<userId>`.
+- To push a live event to a specific user from any route or utility: `require('./utils/socketBus').emitToUser(userId, 'event-name', payload)`. Never `require` `io` directly — always go through the bus so Vercel stays no-op-safe.
+- In dev, Vite forwards WebSocket upgrades via a `/socket.io` proxy with `ws: true` — see `client/vite.config.js`. Without that flag Socket.IO would fall back to long-poll only.
+- Client hook `useSocket()` handles the lifecycle: connects on login, disconnects on logout, reconnects on token change. `useNotifications` subscribes to the `notification` event and dedupes by `_id` to avoid double-inserts when the poll and socket race.
 
 ### Vercel routing quirk
 
@@ -197,7 +205,8 @@ Pages should call these, not `apiRequest` directly.
 - `useInterviews({upcoming, status})` — plus mutators `schedule/reschedule/cancel/completeInterview` that refetch on success.
 - `useProfile()` — student profile with `saveProfile(payload)`.
 - `useResumeAI()` — full lifecycle: upload, analyze, poll status (2 s interval, auto-stops on terminal state), fetch scores, ask questions. **Chat history is persisted server-side** — hydrated from `GET /api/ai/chat` on mount; `clearChat` calls `DELETE /api/ai/chat`. On mount it kicks off `fetchStatus`, `checkHealth`, `fetchCompanyScores`, `fetchJobScores`, `fetchChatHistory` in parallel.
-- `useNotifications()` — 30 s poll while tab is visible, pauses on `visibilitychange`. Exposes `{items, unreadCount, markRead, markAllRead}`. Both mark actions update local state optimistically then hit the server. Used by `NotificationBell` in all three dashboard headers.
+- `useSocket()` — manages the Socket.IO connection to the API server. Auto-connects when a token is present, disconnects on logout, reconnects on token change (up to 10 attempts, exponential backoff). Returns `{connected, on, socket}`. Uses `VITE_API_BASE_URL` if set, otherwise same-origin (Vite proxies `/socket.io` in dev).
+- `useNotifications()` — 60 s poll fallback + real-time push via `useSocket().on('notification', ...)`. Also refetches on tab focus. Exposes `{items, unreadCount, live, markRead, markAllRead}`. Dedupes incoming socket pushes by `_id` in case the poll fires immediately after. Used by `NotificationBell` in all three dashboard headers.
 
 ### Styling / design tokens
 

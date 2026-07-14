@@ -258,7 +258,9 @@ These enable everything else. Consider #9 before deploying anywhere non-local.
 
 ---
 
-## Phase 5 — Nice-to-have
+## Phase 5 — Nice-to-have ✅ DONE
+
+Shipped: `server/utils/socketBus.js` (Vercel-safe no-op when no io instance); `notifier.js` emits `notification` events over Socket.IO after persisting; `server/server.js` wraps Express in an HTTP server + `Server` (with JWT handshake auth) and joins each socket to `user:<userId>`; `api/index.js` unchanged (serverless-safe); client `useSocket` + `useNotifications` reworked (live push + 60s fallback poll + dedupe by `_id`); Vite dev config proxies `/socket.io` with `ws: true`.
 
 ### Feature 8: Real-time updates via Socket.io — **L**
 

@@ -10,6 +10,13 @@ export default defineConfig({
         target: 'http://localhost:5050',
         changeOrigin: true,
       },
+      // Socket.IO uses long-poll + WebSocket upgrade under /socket.io. The
+      // ws: true flag makes Vite forward the upgrade request too.
+      '/socket.io': {
+        target: 'http://localhost:5050',
+        changeOrigin: true,
+        ws: true,
+      },
     },
   },
 })
