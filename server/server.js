@@ -4,6 +4,9 @@
 // the real one — and the mismatch is silent because REST is self-consistent.
 require('dotenv').config();
 
+const { validateEnv } = require('./config/validateEnv');
+validateEnv();
+
 const http = require('http');
 const jwt = require('jsonwebtoken');
 const { Server } = require('socket.io');

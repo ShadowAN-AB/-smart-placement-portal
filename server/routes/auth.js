@@ -22,6 +22,18 @@ const forgotPasswordLimiter = rateLimit({
   message: { message: 'Too many password reset requests. Try again later.' },
 });
 
+// Slow down credential stuffing. Per-IP because tokens are stateless.
+const loginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 min
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  // Skip rate-limiting in test env so the auth suite isn't flaky when it
+  // creates many users. Production still enforces.
+  skip: () => process.env.NODE_ENV === 'test',
+  message: { message: 'Too many login attempts. Try again in 15 minutes.' },
+});
+
 const hashToken = (token) => crypto.createHash('sha256').update(token).digest('hex');
 
 const generateToken = (userId) => {
@@ -78,7 +90,7 @@ router.post('/signup', async (req, res) => {
   }
 });
 
-router.post('/login', async (req, res) => {
+router.post('/login', loginLimiter, async (req, res) => {
   try {
     const { email, password } = req.body;
 

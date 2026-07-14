@@ -1,6 +1,7 @@
 // Env must be set BEFORE any application module loads so
 // modules that read process.env at import time (auth middleware,
 // auth routes) see the test values.
+process.env.NODE_ENV = 'test';
 process.env.JWT_SECRET = 'test_jwt_secret';
 process.env.ADMIN_SIGNUP_CODE = 'test_admin_code';
 process.env.LLM_PROVIDER = 'ollama'; // health() only, no network calls in tests

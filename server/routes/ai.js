@@ -52,14 +52,17 @@ const upload = multer({
   limits: { fileSize: 10 * 1024 * 1024 }, // 10 MB max
 });
 
-// All AI routes require student auth
-router.use(authMiddleware, requireRole('student'));
-
-// ── Health check for Ollama ──
+// ── Health check for the LLM provider (public — no auth) ──
+// Intentionally declared BEFORE the auth guard below. Callers only see
+// {healthy, provider, model, modelLoaded} — no user data, no cost on
+// Anthropic (which returns healthy from key presence alone, no API call).
 router.get('/health', async (_req, res) => {
   const health = await checkOllamaHealth();
   res.json(health);
 });
+
+// All remaining AI routes require student auth
+router.use(authMiddleware, requireRole('student'));
 
 // ── Upload resume ──
 router.post('/resume/upload', upload.single('resume'), async (req, res) => {

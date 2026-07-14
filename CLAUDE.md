@@ -71,7 +71,7 @@ vercel.json     Vercel build/routing config
 
 ### Auth model
 
-- JWT (`jsonwebtoken`) with 7-day expiry, signed with `JWT_SECRET` (falls back to `'dev_jwt_secret_change_me'` — **never rely on that in prod**).
+- JWT (`jsonwebtoken`) with 7-day expiry, signed with `JWT_SECRET` (falls back to `'dev_jwt_secret_change_me'` for local dev). `server/config/validateEnv.js` runs at startup and **throws in production** if `JWT_SECRET`, `ADMIN_SIGNUP_CODE`, or `MONGODB_URI` is missing OR still set to the known dev default. In non-prod it just warns.
 - Roles on `User`: `student`, `recruiter`, `admin`. Admin signup requires the `ADMIN_SIGNUP_CODE` env value (default `placement_admin_2026`).
 - `middleware/auth.js` exports `authMiddleware` and `requireRole(role)`.
 - **Token can also come from `?token=<jwt>` query string** — this exists so browsers can download `.ics` files by clicking a link (`/api/interviews/:id/calendar`). Don't remove it without also fixing the calendar flow.
@@ -83,7 +83,7 @@ vercel.json     Vercel build/routing config
 | Method + path | Auth | What it does |
 |---|---|---|
 | `POST /api/auth/signup` | public | body: `{name,email,password,role,adminCode?}` |
-| `POST /api/auth/login` | public | body: `{email,password}` → `{token,user}` |
+| `POST /api/auth/login` | public | body: `{email,password}` → `{token,user}`. **Rate-limited 10/15min per IP** (skipped in `NODE_ENV=test`) |
 | `GET /api/auth/me` | any | returns `req.user` |
 | `POST /api/auth/forgot-password` | public | **rate-limited 5/hr per IP**; always returns 200 to avoid leaking account existence; emails reset link if user exists |
 | `POST /api/auth/reset-password` | public | `{token,newPassword}`; token expires in 1 hour and is single-use (marked `usedAt`) |
@@ -111,7 +111,7 @@ vercel.json     Vercel build/routing config
 | `GET /api/admin/analytics` | admin | totals, placement rate (`shortlisted`+`interview`/total apps), avg package, top 5 companies, 12-month trend, recent placements |
 | `GET /api/admin/approvals` | admin | jobs with `approved: false`, paged |
 | `POST /api/admin/approve-job/:jobId` | admin | flips `approved: true`; **notifies posting recruiter** |
-| `GET /api/ai/health` | student | current LLM provider health — Ollama tags endpoint or Anthropic key presence |
+| `GET /api/ai/health` | **public** | current LLM provider health — Ollama tags endpoint or Anthropic key presence. No user data returned. |
 | `POST /api/ai/resume/upload` | student | multipart `resume` field, PDF/DOCX only, ≤10 MB. Auto-versioned per user via `pre('save')` hook. |
 | `POST /api/ai/resume/analyze` | student | full pipeline: extract text → Ollama → save `ResumeAnalysis` → **upserts extracted `skills`/`education`/`projects`/`certifications` back into `StudentProfile`**; **notifies student when done** |
 | `GET /api/ai/resume/status` | student | latest upload state |
