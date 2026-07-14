@@ -2,7 +2,6 @@ const express = require('express');
 const mongoose = require('mongoose');
 const multer = require('multer');
 const path = require('path');
-const fs = require('fs');
 const { authMiddleware, requireRole } = require('../middleware/auth');
 const ResumeUpload = require('../models/ResumeUpload');
 const ResumeAnalysis = require('../models/ResumeAnalysis');
@@ -14,26 +13,11 @@ const { extractWithAI, checkOllamaHealth } = require('../utils/aiExtractor');
 const { computeCompanyScores, computeJobScores } = require('../utils/companyScorer');
 const { askAssistant } = require('../utils/aiAssistant');
 const { notify } = require('../utils/notifier');
+const { getBackend } = require('../utils/storage');
 
 const router = express.Router();
 
-// ── Multer setup ──
-const uploadsDir = process.env.VERCEL
-  ? '/tmp'
-  : path.join(__dirname, '..', 'uploads');
-if (!fs.existsSync(uploadsDir)) {
-  fs.mkdirSync(uploadsDir, { recursive: true });
-}
-
-const storage = multer.diskStorage({
-  destination: (_req, _file, cb) => cb(null, uploadsDir),
-  filename: (req, file, cb) => {
-    const uniqueSuffix = `${Date.now()}-${Math.round(Math.random() * 1e6)}`;
-    const ext = path.extname(file.originalname);
-    cb(null, `${req.user._id}-${uniqueSuffix}${ext}`);
-  },
-});
-
+// ── Multer: buffer files in memory. Storage backend takes it from here. ──
 const fileFilter = (_req, file, cb) => {
   const allowed = [
     'application/pdf',
@@ -47,7 +31,7 @@ const fileFilter = (_req, file, cb) => {
 };
 
 const upload = multer({
-  storage,
+  storage: multer.memoryStorage(),
   fileFilter,
   limits: { fileSize: 10 * 1024 * 1024 }, // 10 MB max
 });
@@ -65,16 +49,25 @@ router.get('/health', async (_req, res) => {
 router.use(authMiddleware, requireRole('student'));
 
 // ── Upload resume ──
+// The buffer is handed straight to the storage backend (disk locally,
+// S3/R2 in production). ResumeUpload.filePath stores the storage KEY,
+// not a filesystem path — analyze route resolves it via getBackend().
 router.post('/resume/upload', upload.single('resume'), async (req, res) => {
   try {
     if (!req.file) {
       return res.status(400).json({ message: 'No file uploaded' });
     }
 
+    const ext = path.extname(req.file.originalname);
+    const key = `${req.user._id}-${Date.now()}-${Math.round(Math.random() * 1e6)}${ext}`;
+
+    const backend = getBackend();
+    await backend.put(key, req.file.buffer, req.file.mimetype);
+
     const resumeUpload = await ResumeUpload.create({
       userId: req.user._id,
       originalFilename: req.file.originalname,
-      filePath: req.file.path,
+      filePath: key,
       fileSize: req.file.size,
       mimeType: req.file.mimetype,
       status: 'uploaded',
@@ -122,7 +115,8 @@ router.post('/resume/analyze', async (req, res) => {
 
     let extractedText;
     try {
-      extractedText = await extractText(resumeUpload.filePath, resumeUpload.mimeType);
+      const buffer = await getBackend().getBuffer(resumeUpload.filePath);
+      extractedText = await extractText(buffer, resumeUpload.mimeType);
       resumeUpload.extractedText = extractedText;
       resumeUpload.status = 'extracted';
       await resumeUpload.save();

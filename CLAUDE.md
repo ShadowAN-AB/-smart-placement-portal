@@ -163,9 +163,9 @@ If you change the enhanced factor weights or shape, `models/ResumeAnalysis.js`'s
 
 ### AI / resume pipeline
 
-1. `POST /api/ai/resume/upload` — Multer saves to `server/uploads/` locally, `/tmp` on Vercel (checked via `process.env.VERCEL`). Filename: `<userId>-<timestamp>-<rand>.<ext>`. 10 MB limit; PDF + DOCX only.
+1. `POST /api/ai/resume/upload` — Multer buffers in memory, then hands off to `utils/storage/` backend (`disk` default; `s3` when `STORAGE_BACKEND=s3` — works for AWS S3, Cloudflare R2, Backblaze B2, MinIO via `S3_ENDPOINT`). Key format: `<userId>-<timestamp>-<rand>.<ext>`. `ResumeUpload.filePath` stores the **storage key**, not a filesystem path. 10 MB limit; PDF + DOCX only.
 2. `POST /api/ai/resume/analyze`:
-   - `utils/resumeParser.js` → text via `pdf-parse` (`new PDFParse(Uint8Array).getText()` — note the class API, not the older function) or `mammoth`, then normalized whitespace.
+   - `getBackend().getBuffer(key)` → `utils/resumeParser.js` extractText(buffer, mimeType). PDF via `pdf-parse` (`new PDFParse(Uint8Array).getText()` — note the class API, not the older function) or DOCX via `mammoth`, then normalized whitespace.
    - `utils/aiExtractor.js` → `getProvider().generateJSON(...)` from `utils/llm/` with strict JSON-only system prompt, `temperature: 0.1`, `maxTokens: 2048`. Provider handles the transport (Ollama HTTP or Anthropic SDK). On any error or malformed JSON, `regexFallback()` runs (skills, education, cert, coarse experience).
    - `utils/companyScorer.js` → `computeCompanyScores` (best job per company) and `computeJobScores` (all jobs), both using `calculateEnhancedMatchScore`.
    - Persists `ResumeAnalysis` (upsert on `{userId, resumeId}`), **and merges extracted data back into `StudentProfile`** via `$set` on education/projects/certifications and `$addToSet` on skills.
@@ -188,7 +188,7 @@ If you change the enhanced factor weights or shape, `models/ResumeAnalysis.js`'s
 
 ### Vercel routing quirk
 
-`vercel.json` rewrites `/api/(.*) → /api` and `/(.*) → /index.html`. The Express app inside `api/index.js` sees the full `/api/...` path, so mount paths must include `/api` (they do). **Don't strip the prefix.** Uploads on Vercel go to ephemeral `/tmp` — files won't survive across invocations, so multi-request flows (upload then later analyze) will break unless a durable store is added.
+`vercel.json` rewrites `/api/(.*) → /api` and `/(.*) → /index.html`. The Express app inside `api/index.js` sees the full `/api/...` path, so mount paths must include `/api` (they do). **Don't strip the prefix.** For Vercel deploys, set `STORAGE_BACKEND=s3` + S3/R2 credentials — the default disk backend writes to ephemeral `/tmp` per-invocation, which silently breaks the upload → analyze flow across requests.
 
 ## Client
 
@@ -231,7 +231,7 @@ Use these tokens instead of hardcoding hex values. Formatters in `src/utils/form
 
 - **CJS vs ESM split** — server is `"type": "commonjs"`, client is `"type": "module"`. Don't cross the streams.
 - **Skills are lowercased at the boundary** — jobs and student skills are stored/compared lowercase. Preserve this in any new skill-related code.
-- **`server/uploads/` has real sample PDFs committed** (7 files). Don't add more; on Vercel this path isn't used (goes to `/tmp`).
+- **`server/uploads/` has real sample PDFs committed** (7 files). Don't add more. This dir is only used when `STORAGE_BACKEND=disk` (default local). Prod deploys should set `STORAGE_BACKEND=s3` + credentials.
 - **Env leak history** — commits `cad613b`, `60ac244`, `de1b196` are the scrub trail for a leaked `server/.env`. Treat anything found in old history as compromised and rotate.
 - **Ollama defaults** — `.env.example` says `llama3` but `ollamaProvider.js` defaults to `qwen2.5-coder`. Only matters when `LLM_PROVIDER=ollama`; irrelevant on Anthropic. Whatever's in your `.env` wins over both.
 - **PDF parser API** — `resumeParser.js` uses `new PDFParse(new Uint8Array(buf)).getText()`, which is the class-based API from `pdf-parse` v2. Older `pdf-parse(buf)` functional API won't work.
