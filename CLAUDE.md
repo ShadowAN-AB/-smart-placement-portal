@@ -220,12 +220,17 @@ Pages should call these, not `apiRequest` directly.
 
 ### Styling / design tokens
 
-Tailwind config (`client/tailwind.config.js`) defines:
-- Colors: `intel-blue` (#1A73E8), `intel-blue-dark`, `intel-blue-light`, `success`, `warning`, `error`.
-- Fonts: `heading` (Manrope), `sans` (Inter).
-- `rounded-portal` (12px), `shadow-panel`.
+Tailwind config (`client/tailwind.config.js`) still defines the original dark palette (`intel-blue` #1A73E8, `intel-blue-dark`, `intel-blue-light`, `success`, `warning`, `error`; `rounded-portal` 12px; `shadow-panel`) and typography (`heading` = Manrope, `sans` = Inter). **These tokens are legacy — every page has been reskinned to a light editorial theme.** Use it for any new client work:
 
-Use these tokens instead of hardcoding hex values. Formatters in `src/utils/formatters.js` render INR currency, LPA (Lakhs Per Annum = value/100000), match labels (`Poor/Good/Excellent`), and interview date/time/countdown.
+- Base: `bg-stone-50` page, `text-zinc-900` body, `border-zinc-200` hairlines.
+- Primary CTA: `bg-zinc-900 text-white` (near-black).
+- Accent: `emerald-600` (positive-action buttons, active tabs, uppercase eyebrows, chart bars).
+- Status tones: emerald (accent), amber (warn / missing), red (danger).
+- Every converted page has a sticky white top bar with an `N` brand tile + `Nexus.` wordmark + role subtitle + tabs + light notification bell + avatar chip + Sign out. Editorial header pattern: uppercase emerald eyebrow → `font-heading` 3xl headline → subtitle → right-aligned action buttons → 4-tile KPI strip → light `Section` cards.
+
+Do **not** introduce new `intel-blue` / `slate-*` usages, and do **not** import from `client/src/components/common/*` (or the top-level `JobCard`, `NotificationBell`, `UpcomingInterviews`, `MatchGauge`, `AskAssistant`, `ApplicationStatusBadge`, `InterviewStatusBadge`) on pages — those are all still dark and are effectively orphaned. Each converted page inlines its own light primitives (typically a local `Section`, `Spinner`, `NotificationBellLight`, plus `btnPrimary` / `btnGhost` / `btnAccent` / `btnDanger` class strings and an `inputBase` string). Copy that pattern instead of touching the shared dark ones. The one shared component still used and still dark is `InterviewScheduleModal` (opened from the recruiter dashboard's applicants list) — it's the next reskin candidate.
+
+Formatters in `src/utils/formatters.js` render INR currency, LPA (Lakhs Per Annum = value/100000), match labels (`Poor/Good/Excellent`), and interview date/time/countdown.
 
 ## Conventions & gotchas
 
