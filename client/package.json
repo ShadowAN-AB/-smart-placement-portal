@@ -8,11 +8,12 @@
     "build": "vite build",
     "lint": "eslint .",
     "preview": "vite preview",
-    "test": "vitest run",
-    "test:watch": "vitest",
-    "test:ui": "vitest --ui"
+    "test": "NODE_OPTIONS=--experimental-require-module vitest run",
+    "test:watch": "NODE_OPTIONS=--experimental-require-module vitest",
+    "test:ui": "NODE_OPTIONS=--experimental-require-module vitest --ui"
   },
   "dependencies": {
+    "@rolldown/binding-darwin-arm64": "1.1.5",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
     "react-router-dom": "^7.13.2",
@@ -34,10 +35,13 @@
     "eslint-plugin-react-refresh": "^0.5.2",
     "globals": "^17.4.0",
     "jsdom": "^29.1.1",
-    "msw": "^2.15.0",
+    "msw": "^2.10.4",
     "postcss": "^8.4.49",
     "tailwindcss": "^3.4.13",
     "vite": "^8.0.1",
     "vitest": "^4.1.10"
+  },
+  "overrides": {
+    "rolldown": "1.1.5"
   }
 }

@@ -3,6 +3,10 @@ import react from '@vitejs/plugin-react';
 
 export default defineConfig({
   plugins: [react()],
+  define: {
+    // Force empty base URL so MSW handlers with relative paths match.
+    'import.meta.env.VITE_API_BASE_URL': JSON.stringify(''),
+  },
   test: {
     environment: 'jsdom',
     globals: true,
