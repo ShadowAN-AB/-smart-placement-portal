@@ -36,6 +36,18 @@ const upload = multer({
   limits: { fileSize: 10 * 1024 * 1024 }, // 10 MB max
 });
 
+const uploadResume = (req, res, next) => {
+  upload.single('resume')(req, res, (err) => {
+    if (err instanceof multer.MulterError && err.code === 'LIMIT_FILE_SIZE') {
+      return res.status(413).json({ message: 'Resume must be 10 MB or smaller' });
+    }
+    if (err) {
+      return res.status(400).json({ message: err.message || 'Invalid upload' });
+    }
+    next();
+  });
+};
+
 // ── Health check for the LLM provider (public — no auth) ──
 // Intentionally declared BEFORE the auth guard below. Callers only see
 // {healthy, provider, model, modelLoaded} — no user data, no cost on
@@ -52,7 +64,7 @@ router.use(authMiddleware, requireRole('student'));
 // The buffer is handed straight to the storage backend (disk locally,
 // S3/R2 in production). ResumeUpload.filePath stores the storage KEY,
 // not a filesystem path — analyze route resolves it via getBackend().
-router.post('/resume/upload', upload.single('resume'), async (req, res) => {
+router.post('/resume/upload', uploadResume, async (req, res) => {
   try {
     if (!req.file) {
       return res.status(400).json({ message: 'No file uploaded' });
