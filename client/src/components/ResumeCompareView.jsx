@@ -1,6 +1,4 @@
 import { useEffect, useState } from 'react';
-import LoadingSpinner from './common/LoadingSpinner';
-import Button from './common/Button';
 
 const formatWhen = (dateStr) => {
   if (!dateStr) return '-';
@@ -9,27 +7,35 @@ const formatWhen = (dateStr) => {
   });
 };
 
+const Spinner = ({ label }) => (
+  <div className="flex items-center gap-2 text-sm text-zinc-500 py-2">
+    <svg viewBox="0 0 24 24" fill="none" className="w-4 h-4 animate-spin">
+      <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" opacity="0.25" />
+      <path d="M22 12a10 10 0 00-10-10" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
+    </svg>
+    <span>{label || 'Loading…'}</span>
+  </div>
+);
+
 const DeltaCell = ({ value }) => {
-  if (value === null || value === undefined) {
-    return <span className="text-slate-500">—</span>;
-  }
+  if (value === null || value === undefined) return <span className="text-zinc-400">—</span>;
   const isUp = value > 0;
   const isDown = value < 0;
-  const cls = isUp ? 'text-success' : isDown ? 'text-error' : 'text-slate-400';
+  const cls = isUp ? 'text-emerald-700' : isDown ? 'text-red-700' : 'text-zinc-500';
   const symbol = isUp ? '▲' : isDown ? '▼' : '·';
   return (
-    <span className={`font-semibold ${cls}`}>
+    <span className={`font-semibold tabular-nums ${cls}`}>
       {symbol} {isUp ? '+' : ''}{value}
     </span>
   );
 };
 
 const ScoreCell = ({ value }) => {
-  if (value === null || value === undefined) return <span className="text-slate-500">—</span>;
-  return <span>{value}%</span>;
+  if (value === null || value === undefined) return <span className="text-zinc-400">—</span>;
+  return <span className="tabular-nums">{value}%</span>;
 };
 
-const ResumeCompareView = ({ resumeA, resumeB, onClose, compareResumes, versions }) => {
+const ResumeCompareView = ({ resumeA, resumeB, compareResumes, versions }) => {
   const [result, setResult] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -51,88 +57,83 @@ const ResumeCompareView = ({ resumeA, resumeB, onClose, compareResumes, versions
     return v ? `v${v.version} (${v.filename})` : String(resumeId).slice(-6);
   };
 
-  if (loading) return <LoadingSpinner label="Loading comparison..." />;
-  if (error) return <p className="text-sm text-error">{error}</p>;
+  if (loading) return <Spinner label="Loading comparison…" />;
+  if (error) return <p className="text-sm text-red-700">{error}</p>;
   if (!result) return null;
 
   const { diff, a, b } = result;
 
   return (
     <div className="space-y-6">
-      <header className="flex items-center justify-between">
-        <div>
-          <h2 className="text-xl font-heading font-bold">Comparing resumes</h2>
-          <p className="text-sm text-slate-400">
-            <span className="text-intel-blue-light">{versionLabel(a.resumeId)}</span>
-            {' → '}
-            <span className="text-intel-blue-light">{versionLabel(b.resumeId)}</span>
-          </p>
-        </div>
-        {onClose ? (
-          <Button variant="ghost" onClick={onClose}>Close</Button>
-        ) : null}
-      </header>
+      <div>
+        <p className="text-xs uppercase tracking-wider text-zinc-500">Comparing</p>
+        <p className="mt-1 text-sm text-zinc-800">
+          <span className="font-medium">{versionLabel(a.resumeId)}</span>
+          <span className="mx-2 text-zinc-400">→</span>
+          <span className="font-medium">{versionLabel(b.resumeId)}</span>
+        </p>
+      </div>
 
-      <section className="grid md:grid-cols-2 gap-4">
-        <div className="rounded-portal border border-success/30 bg-success/5 p-4">
-          <p className="text-xs uppercase tracking-wider text-success">Skills added</p>
+      <div className="grid md:grid-cols-2 gap-3">
+        <div className="rounded-md border border-emerald-200 bg-emerald-50 p-4">
+          <p className="text-xs uppercase tracking-wider text-emerald-800">Skills added</p>
           {diff.skillsAdded.length === 0 ? (
-            <p className="text-sm text-slate-400 mt-2">None</p>
+            <p className="text-sm text-zinc-500 mt-2">None</p>
           ) : (
-            <div className="flex flex-wrap gap-2 mt-2">
+            <div className="flex flex-wrap gap-1.5 mt-2">
               {diff.skillsAdded.map((s) => (
-                <span key={s} className="text-xs px-2 py-1 rounded-full bg-success/20 text-success">{s}</span>
+                <span key={s} className="text-xs px-2 py-0.5 rounded border border-emerald-200 bg-white text-emerald-800">{s}</span>
               ))}
             </div>
           )}
         </div>
 
-        <div className="rounded-portal border border-error/30 bg-error/5 p-4">
-          <p className="text-xs uppercase tracking-wider text-error">Skills removed</p>
+        <div className="rounded-md border border-red-200 bg-red-50 p-4">
+          <p className="text-xs uppercase tracking-wider text-red-700">Skills removed</p>
           {diff.skillsRemoved.length === 0 ? (
-            <p className="text-sm text-slate-400 mt-2">None</p>
+            <p className="text-sm text-zinc-500 mt-2">None</p>
           ) : (
-            <div className="flex flex-wrap gap-2 mt-2">
+            <div className="flex flex-wrap gap-1.5 mt-2">
               {diff.skillsRemoved.map((s) => (
-                <span key={s} className="text-xs px-2 py-1 rounded-full bg-error/20 text-error">{s}</span>
+                <span key={s} className="text-xs px-2 py-0.5 rounded border border-red-200 bg-white text-red-700">{s}</span>
               ))}
             </div>
           )}
         </div>
-      </section>
+      </div>
 
-      <section>
-        <h3 className="text-lg font-heading font-semibold">Job score changes</h3>
-        <p className="text-sm text-slate-400 mb-3">Sorted by biggest movement</p>
-        <div className="overflow-x-auto rounded-portal border border-slate-800">
+      <div>
+        <h3 className="font-heading font-semibold text-zinc-900">Job score changes</h3>
+        <p className="text-xs text-zinc-500 mb-3">Sorted by biggest movement</p>
+        <div className="overflow-x-auto rounded-md border border-zinc-200">
           <table className="w-full text-sm">
-            <thead className="bg-slate-900/60 text-left text-xs uppercase tracking-wider text-slate-400">
+            <thead className="bg-zinc-50 text-left text-xs uppercase tracking-wider text-zinc-500">
               <tr>
-                <th className="py-2 px-3">Role</th>
-                <th className="py-2 px-3">Company</th>
-                <th className="py-2 px-3 text-right">Before</th>
-                <th className="py-2 px-3 text-right">After</th>
-                <th className="py-2 px-3 text-right">Δ</th>
+                <th className="py-2 px-3 font-medium">Role</th>
+                <th className="py-2 px-3 font-medium">Company</th>
+                <th className="py-2 px-3 font-medium text-right">Before</th>
+                <th className="py-2 px-3 font-medium text-right">After</th>
+                <th className="py-2 px-3 font-medium text-right">Δ</th>
               </tr>
             </thead>
-            <tbody>
+            <tbody className="divide-y divide-zinc-100">
               {diff.jobScoreDeltas.length === 0 ? (
-                <tr><td colSpan={5} className="py-4 px-3 text-center text-slate-400">No overlapping jobs to compare</td></tr>
+                <tr><td colSpan={5} className="py-4 px-3 text-center text-zinc-500">No overlapping jobs to compare</td></tr>
               ) : diff.jobScoreDeltas.map((row) => (
-                <tr key={row.jobId} className="border-t border-slate-800/60">
-                  <td className="py-2 px-3">{row.title || '-'}</td>
-                  <td className="py-2 px-3 text-slate-400">{row.company || '-'}</td>
-                  <td className="py-2 px-3 text-right"><ScoreCell value={row.before} /></td>
-                  <td className="py-2 px-3 text-right"><ScoreCell value={row.after} /></td>
+                <tr key={row.jobId} className="hover:bg-zinc-50">
+                  <td className="py-2 px-3 text-zinc-900 font-medium">{row.title || '—'}</td>
+                  <td className="py-2 px-3 text-zinc-600">{row.company || '—'}</td>
+                  <td className="py-2 px-3 text-right text-zinc-800"><ScoreCell value={row.before} /></td>
+                  <td className="py-2 px-3 text-right text-zinc-800"><ScoreCell value={row.after} /></td>
                   <td className="py-2 px-3 text-right"><DeltaCell value={row.delta} /></td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
-      </section>
+      </div>
 
-      <p className="text-xs text-slate-500">
+      <p className="text-xs text-zinc-500">
         A analyzed {formatWhen(a.analyzedAt)} · B analyzed {formatWhen(b.analyzedAt)}
       </p>
     </div>
