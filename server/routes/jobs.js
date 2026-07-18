@@ -1,5 +1,6 @@
 const express = require('express');
 const Job = require('../models/Job');
+const Application = require('../models/Application');
 const StudentProfile = require('../models/StudentProfile');
 const { authMiddleware, requireRole } = require('../middleware/auth');
 const { calculateMatchScore } = require('../utils/matchAlgorithm');
@@ -105,7 +106,14 @@ router.get('/', authMiddleware, async (req, res) => {
     const jobs = await Job.find(filters).sort({ createdAt: -1 }).skip(skip).limit(pageSize).lean();
     const totalPages = Math.max(1, Math.ceil(total / pageSize));
 
-    return res.json({ jobs, page, pageSize, total, totalPages });
+    const counts = await Application.aggregate([
+      { $match: { jobId: { $in: jobs.map((j) => j._id) } } },
+      { $group: { _id: '$jobId', count: { $sum: 1 } } },
+    ]);
+    const countByJob = new Map(counts.map((c) => [String(c._id), c.count]));
+    const jobsWithCounts = jobs.map((j) => ({ ...j, totalApplicants: countByJob.get(String(j._id)) || 0 }));
+
+    return res.json({ jobs: jobsWithCounts, page, pageSize, total, totalPages });
   } catch (error) {
     return res.status(500).json({ message: 'Failed to fetch jobs' });
   }
